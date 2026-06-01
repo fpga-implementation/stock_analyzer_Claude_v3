@@ -298,21 +298,25 @@ if not api_key:
 
 # ── Stock inputs ──────────────────────────────────────────────────────────────
 with st.expander("▸ STOCKS TO ANALYZE (up to 3)", expanded=True):
-    cols = st.columns(3)
-    for i, col in enumerate(cols):
-        with col:
-            st.markdown(f'<div class="label">Stock {i+1}</div>', unsafe_allow_html=True)
+    for i in range(3):
+        c1, c2, c3, c4 = st.columns([0.5, 2, 2, 2])
+        with c1:
+            st.markdown(f'<div style="font-size:9px;color:#93c5fd;font-family:Syne,sans-serif;font-weight:700;padding-top:8px">#{i+1}</div>', unsafe_allow_html=True)
+        with c2:
+            st.markdown('<div class="label">Ticker</div>', unsafe_allow_html=True)
             st.session_state['tickers'][i] = st.text_input(
                 "Ticker", value=st.session_state['tickers'][i],
                 placeholder="AAPL", max_chars=6, key=f"tk{i}",
                 label_visibility="collapsed"
             ).upper().strip()
-            st.markdown('<div class="label" style="margin-top:6px">Shares to Buy</div>', unsafe_allow_html=True)
+        with c3:
+            st.markdown('<div class="label">Shares to Buy</div>', unsafe_allow_html=True)
             st.session_state['shares'][i] = st.text_input(
                 "Shares", value=st.session_state['shares'][i],
                 placeholder="0", key=f"sh{i}", label_visibility="collapsed"
             )
-            st.markdown('<div class="label" style="margin-top:6px">Price to Buy $</div>', unsafe_allow_html=True)
+        with c4:
+            st.markdown('<div class="label">Price to Buy $</div>', unsafe_allow_html=True)
             st.session_state['prices'][i] = st.text_input(
                 "Price", value=st.session_state['prices'][i],
                 placeholder="0.00", key=f"pr{i}", label_visibility="collapsed"
