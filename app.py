@@ -211,11 +211,11 @@ def ss(key, default):
 # ── Restore from query params on first load ──
 def load_from_url():
     qp = st.query_params
-    tickers = ['','','']
-    shares  = ['','','']
-    prices  = ['','','']
+    tickers = ['','','','','']
+    shares  = ['','','','','']
+    prices  = ['','','','','']
     holdings = [{'ticker':'','shares':'','cost':''} for _ in range(10)]
-    for i in range(3):
+    for i in range(5):
         tickers[i] = qp.get(f't{i}','')
         shares[i]  = qp.get(f's{i}','')
         prices[i]  = qp.get(f'p{i}','')
@@ -227,7 +227,7 @@ def load_from_url():
 
 def save_to_url():
     qp = {}
-    for i in range(3):
+    for i in range(5):
         if st.session_state['tickers'][i]: qp[f't{i}'] = st.session_state['tickers'][i]
         if st.session_state['shares'][i]:  qp[f's{i}'] = st.session_state['shares'][i]
         if st.session_state['prices'][i]:  qp[f'p{i}'] = st.session_state['prices'][i]
@@ -249,9 +249,9 @@ if 'initialized' not in st.session_state:
 
 ss('result', None)
 ss('running', False)
-ss('tickers', ['','',''])
-ss('shares', ['','',''])
-ss('prices', ['','',''])
+ss('tickers', ['','','','',''])
+ss('shares', ['','','','',''])
+ss('prices', ['','','','',''])
 ss('holdings', [{'ticker':'','shares':'','cost':''} for _ in range(10)])
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -297,8 +297,8 @@ if not api_key:
     st.stop()
 
 # ── Stock inputs ──────────────────────────────────────────────────────────────
-with st.expander("▸ STOCKS TO ANALYZE (up to 3)", expanded=True):
-    for i in range(3):
+with st.expander("▸ STOCKS TO ANALYZE (up to 5)", expanded=True):
+    for i in range(5):
         c1, c2, c3, c4 = st.columns([0.5, 2, 2, 2])
         with c1:
             st.markdown(f'<div style="font-size:9px;color:#93c5fd;font-family:Syne,sans-serif;font-weight:700;padding-top:8px">#{i+1}</div>', unsafe_allow_html=True)
