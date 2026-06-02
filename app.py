@@ -549,51 +549,57 @@ if st.session_state['result']:
         card_border = 'card-win' if is_win else ''
         win_star = ' ★' if is_win else ''
 
+        # Build HTML parts as plain variables — avoids nested quote issues in f-strings
+        price_html = f'<span style="font-size:13px;color:#93c5fd;font-weight:700">${cur_raw}</span>' if cur_raw else ''
+        shares_html = f'<span style="font-size:13px;color:#cbd5e1">&nbsp;· {cur_shares} shares</span>' if cur_shares else ''
+        input_as = s.get('inputAs','')
+        inputas_html = f'<div style="font-size:11px;color:#3b82f6;margin-top:1px">entered as: {input_as}</div>' if input_as and input_as.upper() != tk else ''
+        company_name = s.get('companyName','')
+        overall_score = row.get('overallScore','—')
+
         st.markdown(f"""
         <div class="card {card_border}" style="padding:0;overflow:hidden;margin-bottom:12px">
           <div style="padding:13px 14px 11px;background:#0d1825">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">
               <div>
-                <div style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:#f0f6ff;letter-spacing:2px">
-                  {rank_badge}{tk}{win_star}
-                </div>
-                <div style="font-size:13px;color:#e2e8f0;margin-top:2px">{s.get('companyName','')}</div>
-                {('<div style="font-size:10px;color:#3b82f6;margin-top:1px">entered as: '+s.get('inputAs','')+'</div>') if s.get('inputAs') and s.get('inputAs','').upper()!=tk else ''}
-                <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
-                  {'<span style="font-size:12px;color:#93c5fd;font-weight:700">$'+cur_raw+'</span>' if cur_raw else ''}
-                  {'<span style="font-size:12px;color:#cbd5e1">· '+cur_shares+' shares</span>' if cur_shares else ''}
-                </div>
+                <div style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:#f0f6ff;letter-spacing:2px">{rank_badge}{tk}{win_star}</div>
+                <div style="font-size:14px;color:#e2e8f0;margin-top:2px">{company_name}</div>
+                {inputas_html}
+                <div style="margin-top:5px">{price_html}{shares_html}</div>
               </div>
               <div style="text-align:right">
-                <div style="font-family:'Syne',sans-serif;font-size:17px;font-weight:800;color:#e2e8f0">{row.get('overallScore','—')}</div>
-                <div style="font-size:8px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">Score</div>
+                <div style="font-family:'Syne',sans-serif;font-size:17px;font-weight:800;color:#e2e8f0">{overall_score}</div>
+                <div style="font-size:10px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">Score</div>
               </div>
             </div>
+          </div>
         """, unsafe_allow_html=True)
 
         # Verdict pills
         vc = verdict_cls(vs)
         vcp = verdict_cls(vp)
         c1, c2 = st.columns(2)
+        v_stock_reason = s.get('verdictStockReason','')
+        v_port_reason = s.get('verdictPortfolioReason','')
+        port_label = "Portfolio Synergy" if port_holds else "Portfolio Context"
+        v_icon_s = verdict_icon(vs)
+        v_icon_p = verdict_icon(vp)
         with c1:
             st.markdown(f"""
             <div class="verdict-{vc}">
               <div class="verdict-tag verdict-tag-{vc}">Standalone Verdict</div>
-              <div class="verdict-label-{vc}">{verdict_icon(vs)} {vs}</div>
-              <div class="verdict-reason">{s.get('verdictStockReason','')}</div>
+              <div class="verdict-label-{vc}">{v_icon_s} {vs}</div>
+              <div class="verdict-reason">{v_stock_reason}</div>
             </div>
             """, unsafe_allow_html=True)
         with c2:
-            port_label = "Portfolio Synergy" if port_holds else "Portfolio Context"
             st.markdown(f"""
             <div class="verdict-{vcp}">
               <div class="verdict-tag verdict-tag-{vcp}">{port_label}</div>
-              <div class="verdict-label-{vcp}">{verdict_icon(vp)} {vp}</div>
-              <div class="verdict-reason">{s.get('verdictPortfolioReason','')}</div>
+              <div class="verdict-label-{vcp}">{v_icon_p} {vp}</div>
+              <div class="verdict-reason">{v_port_reason}</div>
             </div>
             """, unsafe_allow_html=True)
-
-        st.markdown('</div>', unsafe_allow_html=True)
 
         # ── Expandable detail ──
         with st.expander(f"▸ View Detailed Performance Diagnostics — {tk}"):
