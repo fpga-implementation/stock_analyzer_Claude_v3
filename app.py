@@ -549,57 +549,75 @@ if st.session_state['result']:
         card_border = 'card-win' if is_win else ''
         win_star = ' ★' if is_win else ''
 
-        # Build HTML parts as plain variables — avoids nested quote issues in f-strings
-        price_html = f'<span style="font-size:13px;color:#93c5fd;font-weight:700">${cur_raw}</span>' if cur_raw else ''
-        shares_html = f'<span style="font-size:13px;color:#cbd5e1">&nbsp;· {cur_shares} shares</span>' if cur_shares else ''
-        input_as = s.get('inputAs','')
-        inputas_html = f'<div style="font-size:11px;color:#3b82f6;margin-top:1px">entered as: {input_as}</div>' if input_as and input_as.upper() != tk else ''
-        company_name = s.get('companyName','')
-        overall_score = row.get('overallScore','—')
-
-        st.markdown(f"""
-        <div class="card {card_border}" style="padding:0;overflow:hidden;margin-bottom:12px">
-          <div style="padding:13px 14px 11px;background:#0d1825">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">
-              <div>
-                <div style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:#f0f6ff;letter-spacing:2px">{rank_badge}{tk}{win_star}</div>
-                <div style="font-size:14px;color:#e2e8f0;margin-top:2px">{company_name}</div>
-                {inputas_html}
-                <div style="margin-top:5px">{price_html}{shares_html}</div>
-              </div>
-              <div style="text-align:right">
-                <div style="font-family:'Syne',sans-serif;font-size:17px;font-weight:800;color:#e2e8f0">{overall_score}</div>
-                <div style="font-size:10px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">Score</div>
-              </div>
-            </div>
-          </div>
-        """, unsafe_allow_html=True)
-
-        # Verdict pills
-        vc = verdict_cls(vs)
-        vcp = verdict_cls(vp)
-        c1, c2 = st.columns(2)
+        # Pre-build all variables — keep f-string clean
+        company_name   = s.get('companyName','')
+        overall_score  = row.get('overallScore','—')
+        input_as       = s.get('inputAs','')
         v_stock_reason = s.get('verdictStockReason','')
-        v_port_reason = s.get('verdictPortfolioReason','')
-        port_label = "Portfolio Synergy" if port_holds else "Portfolio Context"
-        v_icon_s = verdict_icon(vs)
-        v_icon_p = verdict_icon(vp)
-        with c1:
-            st.markdown(f"""
-            <div class="verdict-{vc}">
-              <div class="verdict-tag verdict-tag-{vc}">Standalone Verdict</div>
-              <div class="verdict-label-{vc}">{v_icon_s} {vs}</div>
-              <div class="verdict-reason">{v_stock_reason}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with c2:
-            st.markdown(f"""
-            <div class="verdict-{vcp}">
-              <div class="verdict-tag verdict-tag-{vcp}">{port_label}</div>
-              <div class="verdict-label-{vcp}">{v_icon_p} {vp}</div>
-              <div class="verdict-reason">{v_port_reason}</div>
-            </div>
-            """, unsafe_allow_html=True)
+        v_port_reason  = s.get('verdictPortfolioReason','')
+        port_label     = "Portfolio Synergy" if port_holds else "Portfolio Context"
+        vc             = verdict_cls(vs)
+        vcp            = verdict_cls(vp)
+        v_icon_s       = verdict_icon(vs)
+        v_icon_p       = verdict_icon(vp)
+
+        # Build conditional snippets
+        price_part   = ("$" + cur_raw)   if cur_raw   else ""
+        shares_part  = cur_shares        if cur_shares else ""
+        inputas_part = ("entered as: " + input_as) if (input_as and input_as.upper() != tk) else ""
+
+        # One self-contained HTML block — no split across st.columns
+        html = (
+            f'<div style="background:#0a1420;border:1px solid {"#f59e0b" if is_win else "#1a2e48"};'
+            f'margin-bottom:14px;overflow:hidden">'
+
+            # ── Header row ──
+            f'<div style="padding:13px 14px 12px;background:#0d1825">'
+            f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">'
+            f'<div>'
+            f'<div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;'
+            f'color:#f0f6ff;letter-spacing:2px">{rank_badge}{tk}{win_star}</div>'
+            f'<div style="font-size:14px;color:#e2e8f0;margin-top:3px">{company_name}</div>'
+        )
+        if inputas_part:
+            html += f'<div style="font-size:11px;color:#3b82f6;margin-top:2px">{inputas_part}</div>'
+        if price_part or shares_part:
+            html += f'<div style="margin-top:5px">'
+            if price_part:
+                html += f'<span style="font-size:13px;color:#93c5fd;font-weight:700">{price_part}</span>'
+            if shares_part:
+                html += f'<span style="font-size:13px;color:#cbd5e1"> &nbsp;&#183;&nbsp; {shares_part} shares</span>'
+            html += '</div>'
+        html += (
+            f'</div>'  # left side
+            f'<div style="text-align:right">'
+            f'<div style="font-family:Syne,sans-serif;font-size:17px;font-weight:800;color:#e2e8f0">{overall_score}</div>'
+            f'<div style="font-size:10px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">Score</div>'
+            f'</div>'
+            f'</div>'  # flex row
+
+            # ── Verdict pills ──
+            f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+
+            # Standalone verdict
+            f'<div class="verdict-{vc}">'
+            f'<div class="verdict-tag verdict-tag-{vc}">Standalone Verdict</div>'
+            f'<div class="verdict-label-{vc}">{v_icon_s} {vs}</div>'
+            f'<div class="verdict-reason">{v_stock_reason}</div>'
+            f'</div>'
+
+            # Portfolio verdict
+            f'<div class="verdict-{vcp}">'
+            f'<div class="verdict-tag verdict-tag-{vcp}">{port_label}</div>'
+            f'<div class="verdict-label-{vcp}">{v_icon_p} {vp}</div>'
+            f'<div class="verdict-reason">{v_port_reason}</div>'
+            f'</div>'
+
+            f'</div>'  # verdict grid
+            f'</div>'  # header padding div
+            f'</div>'  # outer card
+        )
+        st.markdown(html, unsafe_allow_html=True)
 
         # ── Expandable detail ──
         with st.expander(f"▸ View Detailed Performance Diagnostics — {tk}"):
