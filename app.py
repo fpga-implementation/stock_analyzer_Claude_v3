@@ -513,19 +513,40 @@ if st.session_state['result']:
             cls = 'card-gold' if i == 0 else 'card-gray'
             lbl = '#1 Best Pick' if i == 0 else '#2 Runner-Up'
             score_color = '#f59e0b' if i == 0 else '#9ca3af'
-            st.markdown(f"""
-            <div class="card {cls}" style="position:relative">
-              <div style="position:absolute;top:0;right:0;font-family:'Syne',sans-serif;font-size:8px;font-weight:700;letter-spacing:2px;padding:3px 9px;background:{'#f59e0b' if i==0 else '#4b5563'};color:{'#000' if i==0 else '#fff'}">{lbl}</div>
-              <div style="font-family:'Syne',sans-serif;font-size:22px;font-weight:800;color:#f0f6ff;margin-top:2px">{t.get('ticker','—')}</div>
-              <div style="font-size:11px;color:#94a3b8;margin:2px 0 8px">{t.get('companyName','')}</div>
-              <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:8px">
-                <span style="font-family:'Syne',sans-serif;font-size:18px;font-weight:800;color:{score_color}">{t.get('score','—')}</span>
-                <span style="font-size:11px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">/ 10</span>
-              </div>
-              <div style="font-size:13px;color:#e2e8f0;line-height:1.8;border-top:1px solid #ffffff11;padding-top:8px">{t.get('buyReason','')}</div>
-              <div style="font-size:10px;color:#4ade80;margin-top:6px">{('▸ ' + t.get('entryNote','')) if t.get('entryNote') else ''}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            # Get pricing data for this top2 ticker
+            t2_stock = stocks.get(t.get('ticker',''), {})
+            t2_pp = t2_stock.get('pricing', {})
+            t2_iv  = t2_pp.get('intrinsicValue','')
+            t2_con = t2_pp.get('analystConsensus','')
+            t2_ent = t2_pp.get('entryPrice','')
+            badge_bg  = '#f59e0b' if i==0 else '#4b5563'
+            badge_clr = '#000'    if i==0 else '#fff'
+            entry_note = t.get('entryNote','')
+            buy_reason = t.get('buyReason','')
+
+            price_pills = ''
+            if t2_iv:
+                price_pills += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #ffffff0a"><span style="font-size:10px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">Intrinsic Value</span><span style="font-family:Syne,sans-serif;font-size:14px;font-weight:800;color:#a78bfa">{t2_iv}</span></div>'
+            if t2_con:
+                price_pills += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #ffffff0a"><span style="font-size:10px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">Consensus Target</span><span style="font-family:Syne,sans-serif;font-size:14px;font-weight:800;color:#93c5fd">{t2_con}</span></div>'
+            if t2_ent:
+                price_pills += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0"><span style="font-size:10px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">Entry Price</span><span style="font-family:Syne,sans-serif;font-size:14px;font-weight:800;color:#4ade80">{t2_ent}</span></div>'
+
+            st.markdown(
+                f'<div class="card {cls}" style="position:relative">'
+                f'<div style="position:absolute;top:0;right:0;font-family:Syne,sans-serif;font-size:8px;font-weight:700;letter-spacing:2px;padding:3px 9px;background:{badge_bg};color:{badge_clr}">{lbl}</div>'
+                f'<div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;color:#f0f6ff;margin-top:2px">{t.get("ticker","—")}</div>'
+                f'<div style="font-size:12px;color:#94a3b8;margin:2px 0 6px">{t.get("companyName","")}</div>'
+                f'<div style="display:flex;align-items:baseline;gap:4px;margin-bottom:10px">'
+                f'<span style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;color:{score_color}">{t.get("score","—")}</span>'
+                f'<span style="font-size:11px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase"> / 10</span>'
+                f'</div>'
+                f'{("<div style=\"background:#090f1a;border:1px solid #111c2a;padding:6px 10px;margin-bottom:10px\">" + price_pills + "</div>") if price_pills else ""}'
+                f'<div style="font-size:13px;color:#e2e8f0;line-height:1.8;border-top:1px solid #ffffff11;padding-top:8px">{buy_reason}</div>'
+                f'{("<div style=\"font-size:11px;color:#4ade80;margin-top:6px\">▸ " + entry_note + "</div>") if entry_note else ""}'
+                f'</div>',
+                unsafe_allow_html=True
+            )
 
     if data.get('rankingSummary'):
         st.markdown(f"""
@@ -589,11 +610,32 @@ if st.session_state['result']:
         vcp            = verdict_cls(vp)
         v_icon_s       = verdict_icon(vs)
         v_icon_p       = verdict_icon(vp)
+        iv_val         = pp.get('intrinsicValue','')
+        cons_val       = pp.get('analystConsensus','')
+        entry_val      = pp.get('entryPrice','')
 
         # Build conditional snippets
-        price_part   = ("$" + cur_raw)   if cur_raw   else ""
-        shares_part  = cur_shares        if cur_shares else ""
+        price_part   = ("$" + cur_raw) if cur_raw   else ""
+        shares_part  = cur_shares      if cur_shares else ""
         inputas_part = ("entered as: " + input_as) if (input_as and input_as.upper() != tk) else ""
+
+        # Price strip — intrinsic value, consensus, entry
+        price_strip = ''
+        if iv_val or cons_val or entry_val:
+            price_strip = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">'
+            if iv_val:
+                price_strip += f'<div style="background:#0c0818;border:1px solid #7c3aed44;padding:8px 10px;"><div style="font-size:9px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Intrinsic Value</div><div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#a78bfa">{iv_val}</div></div>'
+            else:
+                price_strip += '<div></div>'
+            if cons_val:
+                price_strip += f'<div style="background:#080f1f;border:1px solid #3b82f644;padding:8px 10px;"><div style="font-size:9px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Consensus Target</div><div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#93c5fd">{cons_val}</div></div>'
+            else:
+                price_strip += '<div></div>'
+            if entry_val:
+                price_strip += f'<div style="background:#060f09;border:1px solid #16a34a44;padding:8px 10px;"><div style="font-size:9px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Entry Price</div><div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#4ade80">{entry_val}</div></div>'
+            else:
+                price_strip += '<div></div>'
+            price_strip += '</div>'
 
         # One self-contained HTML block — no split across st.columns
         html = (
@@ -611,7 +653,7 @@ if st.session_state['result']:
         if inputas_part:
             html += f'<div style="font-size:11px;color:#3b82f6;margin-top:2px">{inputas_part}</div>'
         if price_part or shares_part:
-            html += f'<div style="margin-top:5px">'
+            html += '<div style="margin-top:5px">'
             if price_part:
                 html += f'<span style="font-size:13px;color:#93c5fd;font-weight:700">{price_part}</span>'
             if shares_part:
@@ -624,6 +666,9 @@ if st.session_state['result']:
             f'<div style="font-size:10px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">Score</div>'
             f'</div>'
             f'</div>'  # flex row
+
+            # ── Price strip ──
+            + price_strip +
 
             # ── Verdict pills ──
             f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
