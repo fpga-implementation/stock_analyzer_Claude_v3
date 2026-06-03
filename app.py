@@ -572,50 +572,7 @@ valid_tickers = [t for t in st.session_state['tickers'] if t]
 valid_tickers = [t for t in st.session_state['tickers'] if t]
 btn_label = f"ANALYZE {len(valid_tickers)} STOCK{'S' if len(valid_tickers)!=1 else ''}" if valid_tickers else "ENTER A TICKER TO ANALYZE"
 
-# ── FMP status indicator (session-based call counter) ──
-if 'fmp_calls_today' not in st.session_state:
-    st.session_state['fmp_calls_today'] = 0
 
-if fmp_key:
-    FMP_DAILY_LIMIT = 250
-    calls_per_analysis = len(valid_tickers) * 11 if valid_tickers else 11
-    calls_used = st.session_state['fmp_calls_today']
-    calls_left = max(0, FMP_DAILY_LIMIT - calls_used)
-    analyses_left = calls_left // calls_per_analysis if calls_per_analysis > 0 else 0
-    pct_used = min(100, int((calls_used / FMP_DAILY_LIMIT) * 100))
-    bar_color = "#4ade80" if calls_left > 125 else ("#fbbf24" if calls_left > 50 else "#f87171")
-    status_text = "Live data active ✓" if calls_left > 0 else "Daily limit reached — using Claude data"
-    status_color = "#4ade80" if calls_left > 0 else "#f87171"
-    st.markdown(f"""
-    <div style="background:#0a1420;border:1px solid #1a2e48;padding:10px 14px;margin-bottom:10px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:8px">
-        <div style="font-size:9px;letter-spacing:2px;color:#94a3b8;text-transform:uppercase">
-          FMP Live Data — <span style="color:{status_color}">{status_text}</span>
-        </div>
-        <div style="display:flex;gap:16px">
-          <div style="text-align:right">
-            <span style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:{bar_color}">{calls_left}</span>
-            <span style="font-size:9px;color:#94a3b8;margin-left:4px">calls left*</span>
-          </div>
-          <div style="text-align:right">
-            <span style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#e2e8f0">~{analyses_left}</span>
-            <span style="font-size:9px;color:#94a3b8;margin-left:4px">analyses left*</span>
-          </div>
-        </div>
-      </div>
-      <div style="height:4px;background:#1a2e48;border-radius:2px;overflow:hidden">
-        <div style="height:4px;width:{pct_used}%;background:{bar_color};border-radius:2px"></div>
-      </div>
-      <div style="font-size:9px;color:#3a5570;margin-top:4px">* Estimated based on this session. Check exact usage at financialmodelingprep.com/developer/docs/dashboard</div>
-    </div>
-    """, unsafe_allow_html=True)
-else:
-    st.markdown("""
-    <div style="background:#0f1208;border:1px solid #ca8a0444;padding:8px 14px;margin-bottom:10px;font-size:11px;color:#fbbf24">
-      ⚠ FMP key not set — using Claude training data only.
-      Add <code>FMP_API_KEY</code> to Streamlit secrets for live market data.
-    </div>
-    """, unsafe_allow_html=True)
 
 if st.button(btn_label, disabled=not valid_tickers or st.session_state['running']):
     st.session_state['running'] = True
@@ -746,7 +703,6 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                         raw = fut.result()
                         fmp_contexts[tk] = format_fmp_context(tk, raw)
                         st.write(f"  ✓ {tk} live data fetched")
-                        st.session_state['fmp_calls_today'] += 11  # ~11 endpoints per stock
             else:
                 st.warning("⚠ FMP_API_KEY not set — using Claude training data only. Add FMP_API_KEY to Streamlit secrets for live data.")
 
