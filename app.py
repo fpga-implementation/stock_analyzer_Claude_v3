@@ -449,6 +449,8 @@ if 'initialized' not in st.session_state:
 
 ss('result', None)
 ss('running', False)
+ss('data_source', None)
+ss('fmp_tickers', [])
 ss('tickers', ['','','','',''])
 ss('shares', ['','','','',''])
 ss('prices', ['','','','',''])
@@ -480,6 +482,21 @@ if not api_key:
 if not api_key:
     import os
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+
+# ── FMP API key ──
+import os as _os
+fmp_key = ""
+try:
+    fmp_key = st.secrets["FMP_API_KEY"]
+except:
+    pass
+if not fmp_key:
+    try:
+        fmp_key = st.secrets.get("FMP_API_KEY", "")
+    except:
+        pass
+if not fmp_key:
+    fmp_key = _os.environ.get("FMP_API_KEY", "")
 
 if not api_key:
     st.markdown("""
@@ -554,6 +571,51 @@ valid_tickers = [t for t in st.session_state['tickers'] if t]
 # ── Analyze button ────────────────────────────────────────────────────────────
 valid_tickers = [t for t in st.session_state['tickers'] if t]
 btn_label = f"ANALYZE {len(valid_tickers)} STOCK{'S' if len(valid_tickers)!=1 else ''}" if valid_tickers else "ENTER A TICKER TO ANALYZE"
+
+# ── FMP status indicator (session-based call counter) ──
+if 'fmp_calls_today' not in st.session_state:
+    st.session_state['fmp_calls_today'] = 0
+
+if fmp_key:
+    FMP_DAILY_LIMIT = 250
+    calls_per_analysis = len(valid_tickers) * 11 if valid_tickers else 11
+    calls_used = st.session_state['fmp_calls_today']
+    calls_left = max(0, FMP_DAILY_LIMIT - calls_used)
+    analyses_left = calls_left // calls_per_analysis if calls_per_analysis > 0 else 0
+    pct_used = min(100, int((calls_used / FMP_DAILY_LIMIT) * 100))
+    bar_color = "#4ade80" if calls_left > 125 else ("#fbbf24" if calls_left > 50 else "#f87171")
+    status_text = "Live data active ✓" if calls_left > 0 else "Daily limit reached — using Claude data"
+    status_color = "#4ade80" if calls_left > 0 else "#f87171"
+    st.markdown(f"""
+    <div style="background:#0a1420;border:1px solid #1a2e48;padding:10px 14px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:8px">
+        <div style="font-size:9px;letter-spacing:2px;color:#94a3b8;text-transform:uppercase">
+          FMP Live Data — <span style="color:{status_color}">{status_text}</span>
+        </div>
+        <div style="display:flex;gap:16px">
+          <div style="text-align:right">
+            <span style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:{bar_color}">{calls_left}</span>
+            <span style="font-size:9px;color:#94a3b8;margin-left:4px">calls left*</span>
+          </div>
+          <div style="text-align:right">
+            <span style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#e2e8f0">~{analyses_left}</span>
+            <span style="font-size:9px;color:#94a3b8;margin-left:4px">analyses left*</span>
+          </div>
+        </div>
+      </div>
+      <div style="height:4px;background:#1a2e48;border-radius:2px;overflow:hidden">
+        <div style="height:4px;width:{pct_used}%;background:{bar_color};border-radius:2px"></div>
+      </div>
+      <div style="font-size:9px;color:#3a5570;margin-top:4px">* Estimated based on this session. Check exact usage at financialmodelingprep.com/developer/docs/dashboard</div>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    st.markdown("""
+    <div style="background:#0f1208;border:1px solid #ca8a0444;padding:8px 14px;margin-bottom:10px;font-size:11px;color:#fbbf24">
+      ⚠ FMP key not set — using Claude training data only.
+      Add <code>FMP_API_KEY</code> to Streamlit secrets for live market data.
+    </div>
+    """, unsafe_allow_html=True)
 
 if st.button(btn_label, disabled=not valid_tickers or st.session_state['running']):
     st.session_state['running'] = True
@@ -684,6 +746,7 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                         raw = fut.result()
                         fmp_contexts[tk] = format_fmp_context(tk, raw)
                         st.write(f"  ✓ {tk} live data fetched")
+                        st.session_state['fmp_calls_today'] += 11  # ~11 endpoints per stock
             else:
                 st.warning("⚠ FMP_API_KEY not set — using Claude training data only. Add FMP_API_KEY to Streamlit secrets for live data.")
 
@@ -709,6 +772,8 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                 st.error(f"Could not parse response. Raw: {txt[:300]}")
             else:
                 st.session_state['result'] = parsed
+                st.session_state['data_source'] = "FMP + Claude" if fmp_contexts else "Claude only"
+                st.session_state['fmp_tickers'] = list(fmp_contexts.keys()) if fmp_contexts else []
                 status.update(label="Analysis complete!", state="complete")
         except Exception as e:
             st.error(f"Error: {e}")
@@ -721,6 +786,38 @@ if st.session_state['result']:
     top2 = data.get('top2', [])
     stocks = data.get('stocks', {})
     ctable = data.get('comparisonTable', [])
+
+    # ── Data source badge ──
+    data_source = st.session_state.get('data_source')
+    fmp_tickers = st.session_state.get('fmp_tickers', [])
+    if data_source:
+        if data_source == "FMP + Claude":
+            badge_bg    = "#061508"
+            badge_border= "#16a34a55"
+            badge_icon  = "📡"
+            badge_color = "#4ade80"
+            badge_label = "Live Data"
+            badge_desc  = f"Real-time market data from Financial Modeling Prep ({', '.join(fmp_tickers)}) + AI reasoning by Claude"
+        else:
+            badge_bg    = "#0f1208"
+            badge_border= "#ca8a0455"
+            badge_icon  = "🧠"
+            badge_color = "#fbbf24"
+            badge_label = "Training Data"
+            badge_desc  = "FMP not connected — analysis based on Claude training knowledge. Add FMP_API_KEY to Streamlit secrets for live data."
+        st.markdown(f"""
+        <div style="background:{badge_bg};border:1px solid {badge_border};padding:10px 14px;
+                    margin-bottom:14px;display:flex;align-items:center;gap:12px">
+          <div style="font-size:20px">{badge_icon}</div>
+          <div>
+            <div style="font-family:Syne,sans-serif;font-size:11px;font-weight:700;
+                        letter-spacing:2px;text-transform:uppercase;color:{badge_color}">
+              Data Source: {badge_label}
+            </div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:2px">{badge_desc}</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     # Deduplicate stocks — keep all that Claude returned, just normalise keys
     # Do NOT filter against valid_tickers because Claude resolves names to symbols
