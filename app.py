@@ -230,7 +230,7 @@ def save_to_url():
     for i in range(5):
         if st.session_state['tickers'][i]: qp[f't{i}'] = st.session_state['tickers'][i]
         if st.session_state['shares'][i]:  qp[f's{i}'] = st.session_state['shares'][i]
-        if st.session_state['prices'][i]:  qp[f'p{i}'] = st.session_state['prices'][i]
+        # price field removed from inputs
     for i in range(10):
         h = st.session_state['holdings'][i]
         if h['ticker']: qp[f'ht{i}'] = h['ticker']
@@ -299,7 +299,7 @@ if not api_key:
 # ── Stock inputs ──────────────────────────────────────────────────────────────
 with st.expander("▸ STOCKS TO ANALYZE (up to 5)", expanded=True):
     for i in range(5):
-        c1, c2, c3, c4 = st.columns([0.5, 2, 2, 2])
+        c1, c2, c3 = st.columns([0.5, 2, 2])
         with c1:
             st.markdown(f'<div style="font-size:9px;color:#93c5fd;font-family:Syne,sans-serif;font-weight:700;padding-top:8px">#{i+1}</div>', unsafe_allow_html=True)
         with c2:
@@ -315,18 +315,14 @@ with st.expander("▸ STOCKS TO ANALYZE (up to 5)", expanded=True):
                 "Shares", value=st.session_state['shares'][i],
                 placeholder="0", key=f"sh{i}", label_visibility="collapsed"
             )
-        with c4:
-            st.markdown('<div class="label">Price to Buy $</div>', unsafe_allow_html=True)
-            st.session_state['prices'][i] = st.text_input(
-                "Price", value=st.session_state['prices'][i],
-                placeholder="0.00", key=f"pr{i}", label_visibility="collapsed"
-            )
+        # Price to Buy field removed — entry price is AI-suggested in output
+        st.session_state['prices'][i] = ''
 
 # ── Portfolio ─────────────────────────────────────────────────────────────────
 with st.expander("▸ MY PORTFOLIO — TOP 10 HOLDINGS (optional)"):
     st.markdown('<div class="label">Ticker · Shares · Avg Cost per share</div>', unsafe_allow_html=True)
     for i in range(10):
-        c1, c2, c3, c4 = st.columns([0.5, 2, 2, 2])
+        c1, c2, c3 = st.columns([0.5, 2, 2])
         with c1:
             st.markdown(f'<div style="font-size:9px;color:#fff;padding-top:8px">#{i+1}</div>', unsafe_allow_html=True)
         with c2:
@@ -396,7 +392,7 @@ Return ONLY valid JSON (no markdown, no explanation):
       "verdictPortfolio":"BULLISH","verdictPortfolioReason":"one sentence",
       "sentimentScore":70,
       "portfolioInsights":{{"concentrationRisk":"...","sectorOverlap":"...","correlationNote":"...","diversificationImpact":"...","recommendation":"..."}},
-      "pricing":{{"intrinsicValue":"$X","intrinsicMethod":"Blended","entryPrice":"$X","entryRationale":"...","analystConsensus":"$X","targetRange":"$X-$X"}},
+      "pricing":{{"intrinsicValue":"$X","intrinsicMethod":"Blended","entryPrice":"$X — suggested entry price","entryRationale":"Based on: (1) intrinsic value with 15% margin of safety, (2) key technical support levels from 1-year price chart (50-day MA, 200-day MA, major support zones), and (3) historical price behavior near these levels. Cite the specific support level or MA that anchors this price.","analystConsensus":"$X","targetRange":"$X-$X"}},
       "ivBreakdown":[{{"method":"DCF","value":"$X","desc":"..."}},{{"method":"EV/EBITDA","value":"$X","desc":"..."}},{{"method":"Fwd P/E","value":"$X","desc":"..."}},{{"method":"P/FCF","value":"$X","desc":"..."}}],
       "topAnalysts":[{{"name":"...","firm":"...","accuracyPct":"XX%","rating":"Buy","target":"$X","thesis":"..."}}],
       "fundamentals":{{"revenue":{{"v":"$XB","sig":"good"}},"grossMargin":{{"v":"X%","sig":"good"}},"operatingMargin":{{"v":"X%","sig":"good"}},"netMargin":{{"v":"X%","sig":"good"}},"eps":{{"v":"$X","sig":"good"}},"forwardEPS":{{"v":"$X","sig":"ok"}},"peRatio":{{"v":"Xx","sig":"ok"}},"forwardPE":{{"v":"Xx","sig":"ok"}},"evEbitda":{{"v":"Xx","sig":"ok"}},"debtToEquity":{{"v":"X.X","sig":"ok"}},"freeCashFlow":{{"v":"$XB","sig":"good"}},"roe":{{"v":"X%","sig":"good"}},"divYield":{{"v":"X%","sig":"ok"}}}},
@@ -440,6 +436,11 @@ Utilities (VST,NEE,DUK etc): WACC 7-9%, DCF terminal growth 1.5-2.5%, normalized
 Tech/Growth (NVDA,MSFT,AAPL etc): WACC 9-12%, growth 2.5-4%, EV/EBITDA 20-40x, P/E 20-35x.
 Show actual inputs in desc field e.g. "WACC 8.2%, g 2%, normalized FCF $1.8B".
 For sectorAnalysis.peerComparison use 3-4 real sector peers. For riskAnalysis list 3 specific key risks.
+ENTRY PRICE METHODOLOGY — use ALL three inputs together:
+1. VALUATION FLOOR: intrinsic value × 0.85 (15% margin of safety)
+2. TECHNICAL SUPPORT: identify the strongest support level from the 1-year chart — 50-day MA, 200-day MA, prior consolidation zones, or recent swing lows. Use whichever is most relevant and actionable.
+3. FINAL ENTRY: the higher of (valuation floor) and (nearest technical support below current price). If the stock is already below intrinsic value, the entry may be at or near current price.
+Always explain which factor drove the entry price in entryRationale.
 Sections text: 2 sentences each, not 10 words — be informative."""
 
     with st.status("Analyzing stocks...", expanded=True) as status:
@@ -724,7 +725,7 @@ if st.session_state['result']:
                 ep = pp.get('entryPrice','—')
                 st.markdown(f"""
                 <div class="card card-green">
-                  <div class="label">Entry Price</div>
+                  <div class="label">Suggested Entry Price</div>
                   <div class="big-val big-val-green">{ep}</div>
                   <div class="sub-text">{pp.get('entryRationale','15% margin of safety')}</div>
                   {delta_badge(ep, cur_raw)}
