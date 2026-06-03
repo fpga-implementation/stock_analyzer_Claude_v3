@@ -322,7 +322,7 @@ with st.expander("▸ STOCKS TO ANALYZE (up to 5)", expanded=True):
 with st.expander("▸ MY PORTFOLIO — TOP 10 HOLDINGS (optional)"):
     st.markdown('<div class="label">Ticker · Shares · Avg Cost per share</div>', unsafe_allow_html=True)
     for i in range(10):
-        c1, c2, c3 = st.columns([0.5, 2, 2])
+        c1, c2, c3, c4 = st.columns([0.5, 2, 2, 2])
         with c1:
             st.markdown(f'<div style="font-size:9px;color:#fff;padding-top:8px">#{i+1}</div>', unsafe_allow_html=True)
         with c2:
