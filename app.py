@@ -2,6 +2,11 @@ import streamlit as st
 import anthropic
 import json
 import re
+import asyncio
+import aiohttp
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import urllib.request
+import urllib.parse
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -202,6 +207,202 @@ FUND_LABELS = [
     ("roe","ROE"),("divYield","Div Yield"),
 ]
 
+# ── FMP Data Fetching ────────────────────────────────────────────────────────
+
+def fmp_get(endpoint, fmp_api_key, params=None):
+    """Fetch a single FMP endpoint. Returns dict/list or None on error."""
+    base = "https://financialmodelingprep.com/api"
+    url = f"{base}{endpoint}?apikey={fmp_api_key}"
+    if params:
+        url += "&" + urllib.parse.urlencode(params)
+    try:
+        with urllib.request.urlopen(url, timeout=8) as r:
+            data = json.loads(r.read().decode())
+            return data
+    except Exception:
+        return None
+
+def fmp_fetch_all(ticker, fmp_api_key):
+    """Fetch all relevant FMP data for a ticker in parallel threads."""
+    endpoints = {
+        "quote":       f"/v3/quote/{ticker}",
+        "profile":     f"/v3/profile/{ticker}",
+        "ratios":      f"/v3/ratios-ttm/{ticker}",
+        "income":      f"/v3/income-statement/{ticker}",
+        "cashflow":    f"/v3/cash-flow-statement/{ticker}",
+        "balance":     f"/v3/balance-sheet-statement/{ticker}",
+        "estimates":   f"/v3/analyst-estimates/{ticker}",
+        "targets":     f"/v4/price-target-consensus",
+        "target_list": f"/v4/price-target",
+        "dcf":         f"/v3/discounted-cash-flow/{ticker}",
+        "earnings_est":f"/v3/earnings-surprises/{ticker}",
+    }
+    results = {}
+    def fetch_one(key, ep):
+        params = {"symbol": ticker} if key in ("targets", "target_list") else None
+        return key, fmp_get(ep, fmp_api_key, params)
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(fetch_one, k, v): k for k, v in endpoints.items()}
+        for fut in as_completed(futures):
+            key, data = fut.result()
+            results[key] = data
+    return results
+
+def format_fmp_context(ticker, raw):
+    """Format FMP raw data into a clean text block for the Claude prompt."""
+    lines = [f"=== LIVE MARKET DATA FOR {ticker} (from Financial Modeling Prep) ==="]
+
+    # Quote
+    q = (raw.get("quote") or [{}])
+    q = q[0] if isinstance(q, list) and q else q if isinstance(q, dict) else {}
+    if q:
+        price = q.get("price","N/A")
+        chg   = q.get("changesPercentage","N/A")
+        mktcap= q.get("marketCap","N/A")
+        hi52  = q.get("yearHigh","N/A")
+        lo52  = q.get("yearLow","N/A")
+        pe    = q.get("pe","N/A")
+        eps   = q.get("eps","N/A")
+        avg50 = q.get("priceAvg50","N/A")
+        avg200= q.get("priceAvg200","N/A")
+        vol   = q.get("avgVolume","N/A")
+        lines.append(f"Current Price: ${price} ({chg}% today)")
+        lines.append(f"Market Cap: ${mktcap:,}" if isinstance(mktcap,int) else f"Market Cap: {mktcap}")
+        lines.append(f"52-Week Range: ${lo52} – ${hi52}")
+        lines.append(f"50-Day MA: ${avg50}  |  200-Day MA: ${avg200}")
+        lines.append(f"P/E (TTM): {pe}  |  EPS (TTM): ${eps}")
+        lines.append(f"Avg Volume: {vol:,}" if isinstance(vol,int) else f"Avg Volume: {vol}")
+
+    # Profile
+    p = (raw.get("profile") or [{}])
+    p = p[0] if isinstance(p, list) and p else p if isinstance(p, dict) else {}
+    if p:
+        lines.append(f"Sector: {p.get('sector','N/A')}  |  Industry: {p.get('industry','N/A')}")
+        lines.append(f"Description: {str(p.get('description',''))[:300]}")
+        beta = p.get("beta","N/A")
+        lines.append(f"Beta: {beta}")
+
+    # Ratios TTM
+    r = (raw.get("ratios") or [{}])
+    r = r[0] if isinstance(r, list) and r else r if isinstance(r, dict) else {}
+    if r:
+        lines.append("--- KEY RATIOS (TTM) ---")
+        def fmt(v, pct=False, x=False):
+            if v is None: return "N/A"
+            try:
+                f = float(v)
+                if pct: return f"{f*100:.1f}%"
+                if x:   return f"{f:.1f}x"
+                return f"{f:.2f}"
+            except: return str(v)
+        lines.append(f"P/E: {fmt(r.get('peRatioTTM'),x=True)}  |  Fwd P/E: {fmt(r.get('priceEarningsRatioTTM'),x=True)}")
+        lines.append(f"P/S: {fmt(r.get('priceToSalesRatioTTM'),x=True)}  |  P/B: {fmt(r.get('priceToBookRatioTTM'),x=True)}")
+        lines.append(f"EV/EBITDA: {fmt(r.get('enterpriseValueMultipleTTM'),x=True)}")
+        lines.append(f"Gross Margin: {fmt(r.get('grossProfitMarginTTM'),pct=True)}  |  Net Margin: {fmt(r.get('netProfitMarginTTM'),pct=True)}")
+        lines.append(f"Op Margin: {fmt(r.get('operatingProfitMarginTTM'),pct=True)}")
+        lines.append(f"ROE: {fmt(r.get('returnOnEquityTTM'),pct=True)}  |  ROIC: {fmt(r.get('returnOnInvestedCapitalTTM'),pct=True)}")
+        lines.append(f"Debt/Equity: {fmt(r.get('debtEquityRatioTTM'))}  |  Current Ratio: {fmt(r.get('currentRatioTTM'))}")
+        lines.append(f"FCF Yield: {fmt(r.get('freeCashFlowYieldTTM'),pct=True)}")
+        lines.append(f"Dividend Yield: {fmt(r.get('dividendYieldTTM'),pct=True)}")
+
+    # Income statement (most recent)
+    inc = (raw.get("income") or [{}])
+    inc = inc[0] if isinstance(inc, list) and inc else {}
+    if inc:
+        lines.append("--- INCOME STATEMENT (Most Recent Annual) ---")
+        rev  = inc.get("revenue","N/A")
+        gp   = inc.get("grossProfit","N/A")
+        oi   = inc.get("operatingIncome","N/A")
+        ni   = inc.get("netIncome","N/A")
+        ebitda=inc.get("ebitda","N/A")
+        eps_d= inc.get("eps","N/A")
+        period=inc.get("date","N/A")
+        def fm(v):
+            if v=="N/A" or v is None: return "N/A"
+            try:
+                n=float(v)
+                if abs(n)>=1e9: return f"${n/1e9:.2f}B"
+                if abs(n)>=1e6: return f"${n/1e6:.1f}M"
+                return f"${n:,.0f}"
+            except: return str(v)
+        lines.append(f"Period: {period}")
+        lines.append(f"Revenue: {fm(rev)}  |  Gross Profit: {fm(gp)}")
+        lines.append(f"EBITDA: {fm(ebitda)}  |  Operating Income: {fm(oi)}")
+        lines.append(f"Net Income: {fm(ni)}  |  EPS: ${eps_d}")
+
+    # Cash flow (most recent)
+    cf = (raw.get("cashflow") or [{}])
+    cf = cf[0] if isinstance(cf, list) and cf else {}
+    if cf:
+        lines.append("--- CASH FLOW (Most Recent Annual) ---")
+        ocf = cf.get("operatingCashFlow","N/A")
+        fcf = cf.get("freeCashFlow","N/A")
+        capex=cf.get("capitalExpenditure","N/A")
+        lines.append(f"Operating CF: {fm(ocf)}  |  Free CF: {fm(fcf)}  |  CapEx: {fm(capex)}")
+
+    # Balance sheet
+    bs = (raw.get("balance") or [{}])
+    bs = bs[0] if isinstance(bs, list) and bs else {}
+    if bs:
+        lines.append("--- BALANCE SHEET (Most Recent) ---")
+        cash  = bs.get("cashAndCashEquivalents","N/A")
+        debt  = bs.get("totalDebt","N/A")
+        equity= bs.get("totalStockholdersEquity","N/A")
+        lines.append(f"Cash: {fm(cash)}  |  Total Debt: {fm(debt)}  |  Equity: {fm(equity)}")
+
+    # DCF intrinsic value (FMP calculated)
+    dcf = raw.get("dcf")
+    if isinstance(dcf, list) and dcf: dcf = dcf[0]
+    if isinstance(dcf, dict) and dcf.get("dcf"):
+        lines.append(f"--- FMP DCF INTRINSIC VALUE: ${dcf.get('dcf','N/A')} (model date: {dcf.get('date','N/A')}) ---")
+        lines.append("NOTE: Use this as one input but apply sector-appropriate adjustments.")
+
+    # Analyst estimates (forward)
+    est = (raw.get("estimates") or [{}])
+    est = est[0] if isinstance(est, list) and est else {}
+    if est:
+        lines.append("--- ANALYST FORWARD ESTIMATES ---")
+        lines.append(f"Est. Revenue (next yr): {fm(est.get('estimatedRevenueAvg','N/A'))}")
+        lines.append(f"Est. EPS (next yr): ${est.get('estimatedEpsAvg','N/A')}")
+        lines.append(f"Est. EBITDA (next yr): {fm(est.get('estimatedEbitdaAvg','N/A'))}")
+        lines.append(f"Number of analysts: {est.get('numberAnalystEstimatedRevenue','N/A')}")
+
+    # Analyst price targets
+    tgt = raw.get("targets")
+    if isinstance(tgt, list) and tgt: tgt = tgt[0]
+    if isinstance(tgt, dict):
+        lines.append("--- ANALYST PRICE TARGETS (Consensus) ---")
+        lines.append(f"Consensus Target: ${tgt.get('targetConsensus','N/A')}")
+        lines.append(f"High Target: ${tgt.get('targetHigh','N/A')}  |  Low Target: ${tgt.get('targetLow','N/A')}")
+        lines.append(f"Median Target: ${tgt.get('targetMedian','N/A')}")
+
+    # Individual analyst targets (most recent 5)
+    tlist = raw.get("target_list") or []
+    if isinstance(tlist, list) and tlist:
+        lines.append("--- RECENT INDIVIDUAL ANALYST RATINGS ---")
+        for a in tlist[:5]:
+            lines.append(f"  {a.get('analystCompany','?')} | {a.get('analystName','?')} | "
+                        f"Target: ${a.get('priceTarget','?')} | "
+                        f"Published: {a.get('publishedDate','?')[:10] if a.get('publishedDate') else '?'}")
+
+    lines.append(f"=== END LIVE DATA FOR {ticker} ===")
+    return "
+".join(lines)
+
+def resolve_ticker_with_fmp(input_str, fmp_api_key):
+    """Try to resolve a company name to a ticker using FMP search."""
+    input_clean = input_str.strip()
+    # If it looks like a ticker already (<=6 chars, mostly uppercase letters) return as-is
+    if len(input_clean) <= 6 and re.match(r'^[A-Za-z.\-]+$', input_clean):
+        return input_clean.upper()
+    # Otherwise search FMP
+    data = fmp_get("/v3/search", fmp_api_key, {"query": input_clean, "limit": 1, "exchange": "NASDAQ,NYSE"})
+    if data and isinstance(data, list) and data:
+        return data[0].get("symbol", input_clean.upper())
+    return input_clean.upper()
+
+
 # ── Session state ─────────────────────────────────────────────────────────────
 def ss(key, default):
     if key not in st.session_state:
@@ -378,7 +579,8 @@ if st.button(btn_label, disabled=not valid_tickers or st.session_state['running'
         cand_list.append(part)
     cand_str = ", ".join(cand_list)
 
-    prompt = f"""Analyze these stocks as a senior equity analyst: {cand_str}. {port_note}
+    prompt = f"""You are a senior equity analyst. Analyze these stocks: {cand_str}. {port_note}
+Live financial data will be appended below — use those exact numbers for all calculations.
 
 Return ONLY valid JSON (no markdown, no explanation):
 {{
@@ -458,14 +660,48 @@ Always explain which factor drove the entry price in entryRationale.
 Sections text: 2 sentences each, not 10 words — be informative."""
 
     with st.status("Analyzing stocks...", expanded=True) as status:
-        st.write(f"Researching {', '.join(valid_tickers)}...")
+        st.write(f"Resolving tickers and fetching live data...")
         try:
             client = anthropic.Anthropic(api_key=api_key)
-            st.write("Running valuations and fundamentals...")
+
+            # ── Step 1: Resolve tickers ──
+            resolved_tickers = []
+            for vt in valid_tickers:
+                if fmp_key:
+                    rt = resolve_ticker_with_fmp(vt, fmp_key)
+                else:
+                    rt = vt.upper().strip()
+                resolved_tickers.append(rt)
+            st.write(f"Resolved: {', '.join(resolved_tickers)}")
+
+            # ── Step 2: Fetch live FMP data for all tickers in parallel ──
+            fmp_contexts = {}
+            if fmp_key:
+                st.write(f"Fetching live market data from FMP for {', '.join(resolved_tickers)}...")
+                with ThreadPoolExecutor(max_workers=5) as ex:
+                    futures = {ex.submit(fmp_fetch_all, tk, fmp_key): tk for tk in resolved_tickers}
+                    for fut in as_completed(futures):
+                        tk = futures[fut]
+                        raw = fut.result()
+                        fmp_contexts[tk] = format_fmp_context(tk, raw)
+                        st.write(f"  ✓ {tk} live data fetched")
+            else:
+                st.warning("⚠ FMP_API_KEY not set — using Claude training data only. Add FMP_API_KEY to Streamlit secrets for live data.")
+
+            # ── Step 3: Build enriched prompt with live data ──
+            live_data_block = ""
+            if fmp_contexts:
+                live_data_block = "\n\nLIVE MARKET DATA (use these exact numbers — do not estimate or override):\n"
+                live_data_block += "\n\n".join(fmp_contexts.values())
+                live_data_block += "\n\nIMPORTANT: The live data above is from Financial Modeling Prep (real-time). Use ALL provided numbers directly in your analysis — current price, ratios, analyst targets, DCF, estimates. Do not replace them with your own estimates."
+
+            enriched_prompt = prompt + live_data_block
+
+            st.write("Running AI analysis and valuations...")
             message = client.messages.create(
                 model="claude-sonnet-4-5",
                 max_tokens=12000,
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": enriched_prompt}]
             )
             st.write("Building report...")
             txt = "".join(b.text for b in message.content if hasattr(b, 'text'))
