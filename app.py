@@ -472,14 +472,27 @@ if st.session_state['result']:
     stocks = data.get('stocks', {})
     ctable = data.get('comparisonTable', [])
 
-    # Deduplicate and filter to entered tickers only
-    allowed = set(t.upper() for t in valid_tickers)
+    # Deduplicate stocks — keep all that Claude returned, just normalise keys
+    # Do NOT filter against valid_tickers because Claude resolves names to symbols
+    # e.g. user typed "Apple" but Claude returns key "AAPL" — both are valid
     clean_stocks = {}
     for k, v in stocks.items():
         tk = k.upper().strip()
-        if tk in allowed and tk not in clean_stocks:
+        if tk and tk not in clean_stocks:
             clean_stocks[tk] = {**v, 'ticker': tk}
     stocks = clean_stocks
+    # Also add any top2 tickers that somehow didn't make it into stocks{}
+    for t2 in top2:
+        tk2 = (t2.get('ticker') or '').upper().strip()
+        if tk2 and tk2 not in stocks:
+            stocks[tk2] = {
+                'ticker': tk2, 'companyName': t2.get('companyName',''),
+                'verdictStock': 'NEUTRAL', 'verdictStockReason': 'See top picks above.',
+                'verdictPortfolio': 'NEUTRAL', 'verdictPortfolioReason': '',
+                'summary': t2.get('buyReason',''), 'sentimentScore': None,
+                'pricing': {}, 'ivBreakdown': [], 'topAnalysts': [],
+                'fundamentals': None, 'sections': {}, 'sectorAnalysis': {}, 'riskAnalysis': {}
+            }
 
     # Sort: top2 first, then by score
     def sort_key(s):
@@ -537,7 +550,23 @@ if st.session_state['result']:
 
         pp = s.get('pricing', {})
         row = next((r for r in ctable if r and r.get('ticker')==tk), {})
-        cand_idx = valid_tickers.index(tk) if tk in valid_tickers else -1
+        # Match cand_idx: try exact ticker match first, then check if any input
+        # resolves to this ticker (for company name inputs)
+        cand_idx = -1
+        if tk in valid_tickers:
+            cand_idx = valid_tickers.index(tk)
+        else:
+            # Try matching by inputAs field or by position in top2
+            input_as_field = s.get('inputAs','').upper().strip()
+            for idx2, vt in enumerate(valid_tickers):
+                if vt.upper() == tk or vt.upper() == input_as_field:
+                    cand_idx = idx2
+                    break
+            # Last resort: use top2 rank to guess position
+            if cand_idx < 0:
+                ri2 = next((i for i,t in enumerate(top2) if t.get('ticker')==tk), -1)
+                if ri2 >= 0 and ri2 < len(valid_tickers):
+                    cand_idx = ri2
         cur_raw = st.session_state['prices'][cand_idx] if cand_idx >= 0 and st.session_state['prices'][cand_idx] else s.get('currentPrice','')
         cur_shares = st.session_state['shares'][cand_idx] if cand_idx >= 0 else ''
         vs = s.get('verdictStock','NEUTRAL')
