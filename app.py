@@ -55,21 +55,31 @@ input::placeholder { color: rgba(255,255,255,0.4) !important; }
 .stButton > button:hover { background: #2563eb !important; }
 .stButton > button:disabled { background: #1e2d3d !important; color: #7a9ab8 !important; }
 
-/* Stop button */
-button[kind="secondary"][data-testid*="btn_stop"],
-.stButton:has(button[data-testid*="btn_stop"]) button {
-    background: transparent !important; border: 1px solid #dc2626 !important;
-    color: #f87171 !important;
+/* Stop button — light red */
+div[data-testid="column"]:nth-child(2) .stButton > button {
+    background: #2d0a0a !important;
+    border: 1px solid #f87171 !important;
+    color: #fca5a5 !important;
 }
-/* Clear button */
-button[kind="secondary"][data-testid*="btn_clear"],
-.stButton:has(button[data-testid*="btn_clear"]) button {
-    background: transparent !important; border: 1px solid #4b5563 !important;
-    color: #9ca3af !important;
+div[data-testid="column"]:nth-child(2) .stButton > button:hover:not(:disabled) {
+    background: #450a0a !important;
+    border-color: #ef4444 !important;
 }
-/* Disabled stop/clear — muted */
-.stButton > button:disabled {
-    opacity: 0.4 !important;
+div[data-testid="column"]:nth-child(2) .stButton > button:disabled {
+    background: #1a0808 !important;
+    border: 1px solid #7f1d1d55 !important;
+    color: #7f1d1d !important;
+    opacity: 1 !important;
+}
+/* Clear button — light yellow */
+div[data-testid="column"]:nth-child(3) .stButton > button {
+    background: #2d2500 !important;
+    border: 1px solid #fbbf24 !important;
+    color: #fde68a !important;
+}
+div[data-testid="column"]:nth-child(3) .stButton > button:hover {
+    background: #3d3200 !important;
+    border-color: #f59e0b !important;
 }
 
 /* Stop button */
