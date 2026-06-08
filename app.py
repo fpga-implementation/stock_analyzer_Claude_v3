@@ -117,26 +117,6 @@ input::placeholder { color: rgba(255,255,255,0.4) !important; }
 hr { border-color: #111c2a !important; }
 .stAlert { background:#150505 !important; border:1px solid #dc2626 !important; color:#f87171 !important; }
 
-/* ── Stop button (col 2) - light red ── */
-div[data-testid="columns"] > div:nth-child(2) button {
-    background-color: #2d0a0a !important;
-    border: 1px solid #f87171 !important;
-    color: #fca5a5 !important;
-}
-div[data-testid="columns"] > div:nth-child(2) button:disabled {
-    background-color: #110303 !important;
-    border-color: #3d0a0a !important;
-    color: #3d1010 !important;
-}
-/* ── Clear button (col 3) - light yellow ── */
-div[data-testid="columns"] > div:nth-child(3) button {
-    background-color: #2d2500 !important;
-    border: 1px solid #fbbf24 !important;
-    color: #fde68a !important;
-}
-div[data-testid="columns"] > div:nth-child(3) button:hover {
-    background-color: #3d3200 !important;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -604,30 +584,7 @@ btn_label = f"ANALYZE {len(valid_tickers)} STOCK{'S' if len(valid_tickers)!=1 el
 
 
 # ── Button row: Analyze | Stop | Clear ──
-st.markdown("""
-<style>
-#stop-wrap > div > button,
-#stop-wrap > div > div > button,
-#stop-wrap button {
-    background-color: #2d0a0a !important;
-    border: 1px solid #f87171 !important;
-    color: #fca5a5 !important;
-}
-#stop-wrap > div > button:disabled,
-#stop-wrap button:disabled {
-    background-color: #110303 !important;
-    border-color: #3d0a0a !important;
-    color: #3d0a0a !important;
-}
-#clear-wrap > div > button,
-#clear-wrap > div > div > button,
-#clear-wrap button {
-    background-color: #2d2500 !important;
-    border: 1px solid #fbbf24 !important;
-    color: #fde68a !important;
-}
-</style>
-""", unsafe_allow_html=True)
+
 bcol1, bcol2, bcol3 = st.columns([3, 1, 1])
 with bcol1:
     analyze_clicked = st.button(
@@ -637,27 +594,51 @@ with bcol1:
         key="btn_analyze"
     )
 with bcol2:
-    st.markdown('<div id="stop-wrap">', unsafe_allow_html=True)
+    is_running = st.session_state['running']
+    stop_style = (
+        "background:#2d0a0a;border:1px solid #f87171;color:#fca5a5;"
+        "cursor:pointer;font-family:'Syne',sans-serif;font-weight:700;"
+        "font-size:12px;letter-spacing:2px;text-transform:uppercase;"
+        "width:100%;padding:0.6rem;transition:all .2s;"
+    ) if is_running else (
+        "background:#110303;border:1px solid #3d0a0a;color:#3d1010;"
+        "cursor:not-allowed;font-family:'Syne',sans-serif;font-weight:700;"
+        "font-size:12px;letter-spacing:2px;text-transform:uppercase;"
+        "width:100%;padding:0.6rem;opacity:0.5;"
+    )
     stop_clicked = st.button(
         "■ STOP",
-        disabled=not st.session_state['running'],
+        disabled=not is_running,
         use_container_width=True,
         key="btn_stop"
     )
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<style>[data-testid="stBaseButton-secondary"][aria-label="btn_stop"],'
+        f'button[key="btn_stop"] {{ {stop_style} }}</style>',
+        unsafe_allow_html=True
+    )
     if stop_clicked:
         st.session_state['running'] = False
         st.session_state['stop_requested'] = True
         st.rerun()
 with bcol3:
-    st.markdown('<div id="clear-wrap">', unsafe_allow_html=True)
+    clear_style = (
+        "background:#2d2500;border:1px solid #fbbf24;color:#fde68a;"
+        "cursor:pointer;font-family:'Syne',sans-serif;font-weight:700;"
+        "font-size:12px;letter-spacing:2px;text-transform:uppercase;"
+        "width:100%;padding:0.6rem;transition:all .2s;"
+    )
     clear_clicked = st.button(
         "✕ CLEAR",
         disabled=False,
         use_container_width=True,
         key="btn_clear"
     )
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<style>[data-testid="stBaseButton-secondary"][aria-label="btn_clear"],'
+        f'button[key="btn_clear"] {{ {clear_style} }}</style>',
+        unsafe_allow_html=True
+    )
     if clear_clicked:
         for key in ['result','running','data_source','fmp_tickers','stop_requested']:
             if key in ('result','data_source'):    st.session_state[key] = None
