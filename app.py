@@ -584,74 +584,66 @@ btn_label = f"ANALYZE {len(valid_tickers)} STOCK{'S' if len(valid_tickers)!=1 el
 
 
 # ── Button row: Analyze | Stop | Clear ──
+is_running = st.session_state['running']
 
-bcol1, bcol2, bcol3 = st.columns([3, 1, 1])
-with bcol1:
-    analyze_clicked = st.button(
-        btn_label,
-        disabled=not valid_tickers or st.session_state['running'],
-        use_container_width=True,
-        key="btn_analyze"
-    )
-with bcol2:
-    is_running = st.session_state['running']
-    stop_style = (
-        "background:#2d0a0a;border:1px solid #f87171;color:#fca5a5;"
-        "cursor:pointer;font-family:'Syne',sans-serif;font-weight:700;"
-        "font-size:12px;letter-spacing:2px;text-transform:uppercase;"
-        "width:100%;padding:0.6rem;transition:all .2s;"
-    ) if is_running else (
-        "background:#110303;border:1px solid #3d0a0a;color:#3d1010;"
-        "cursor:not-allowed;font-family:'Syne',sans-serif;font-weight:700;"
-        "font-size:12px;letter-spacing:2px;text-transform:uppercase;"
-        "width:100%;padding:0.6rem;opacity:0.5;"
-    )
-    stop_clicked = st.button(
-        "■ STOP",
-        disabled=not is_running,
-        use_container_width=True,
-        key="btn_stop"
-    )
-    st.markdown(
-        f'<style>[data-testid="stBaseButton-secondary"][aria-label="btn_stop"],'
-        f'button[key="btn_stop"] {{ {stop_style} }}</style>',
-        unsafe_allow_html=True
-    )
-    if stop_clicked:
-        st.session_state['running'] = False
-        st.session_state['stop_requested'] = True
-        st.rerun()
-with bcol3:
-    clear_style = (
-        "background:#2d2500;border:1px solid #fbbf24;color:#fde68a;"
-        "cursor:pointer;font-family:'Syne',sans-serif;font-weight:700;"
-        "font-size:12px;letter-spacing:2px;text-transform:uppercase;"
-        "width:100%;padding:0.6rem;transition:all .2s;"
-    )
-    clear_clicked = st.button(
-        "✕ CLEAR",
-        disabled=False,
-        use_container_width=True,
-        key="btn_clear"
-    )
-    st.markdown(
-        f'<style>[data-testid="stBaseButton-secondary"][aria-label="btn_clear"],'
-        f'button[key="btn_clear"] {{ {clear_style} }}</style>',
-        unsafe_allow_html=True
-    )
-    if clear_clicked:
-        for key in ['result','running','data_source','fmp_tickers','stop_requested']:
-            if key in ('result','data_source'):    st.session_state[key] = None
-            elif key == 'running':                 st.session_state[key] = False
-            elif key == 'fmp_tickers':             st.session_state[key] = []
-            else:                                  st.session_state[key] = False
-        st.session_state['tickers']     = ['','','','','']
-        st.session_state['shares']      = ['','','','','']
-        st.session_state['prices']      = ['','','','','']
-        st.session_state['holdings']    = [{'ticker':'','shares':'','cost':''} for _ in range(10)]
-        st.session_state['initialized'] = False
-        st.query_params.clear()
-        st.rerun()
+# Detect stop/clear actions from URL params set by HTML buttons below
+_action = st.query_params.get('action', '')
+if _action == 'stop':
+    st.query_params.pop('action', None)
+    st.session_state['running'] = False
+    st.session_state['stop_requested'] = True
+    st.rerun()
+elif _action == 'clear':
+    st.query_params.pop('action', None)
+    for _k in ['result','running','data_source','fmp_tickers','stop_requested','do_analyze']:
+        if _k in ('result','data_source'):           st.session_state[_k] = None
+        elif _k in ('running','stop_requested','do_analyze'): st.session_state[_k] = False
+        elif _k == 'fmp_tickers':                    st.session_state[_k] = []
+    st.session_state['tickers']     = ['','','','','']
+    st.session_state['shares']      = ['','','','','']
+    st.session_state['prices']      = ['','','','','']
+    st.session_state['holdings']    = [{'ticker':'','shares':'','cost':''} for _ in range(10)]
+    st.session_state['initialized'] = False
+    st.query_params.clear()
+    st.rerun()
+
+# Analyze via st.button (must be Streamlit widget)
+analyze_clicked = st.button(
+    btn_label,
+    disabled=not valid_tickers or is_running,
+    use_container_width=True,
+    key="btn_analyze"
+)
+
+# Stop + Clear as raw HTML buttons — we own the CSS completely
+_stop_bg  = "#2d0a0a" if is_running else "#0d0808"
+_stop_bdr = "#f87171" if is_running else "#2a0a0a"
+_stop_clr = "#fca5a5" if is_running else "#3a1010"
+_stop_cur = "pointer" if is_running else "not-allowed"
+_stop_op  = "1"       if is_running else "0.4"
+_btn_base = (
+    "font-family:monospace;font-size:11px;font-weight:700;letter-spacing:2px;"
+    "text-transform:uppercase;padding:9px 4px;width:100%;border-radius:0;"
+    "transition:background .2s;display:block;text-align:center;"
+    "text-decoration:none;"
+)
+st.markdown(f"""
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;margin-bottom:6px">
+  <a href="?action=stop" style="text-decoration:none;{'pointer-events:none;' if not is_running else ''}">
+    <div style="{_btn_base}background:{_stop_bg};border:1px solid {_stop_bdr};
+                color:{_stop_clr};cursor:{_stop_cur};opacity:{_stop_op}">
+      &#9632; STOP
+    </div>
+  </a>
+  <a href="?action=clear" style="text-decoration:none">
+    <div style="{_btn_base}background:#2d2500;border:1px solid #fbbf24;
+                color:#fde68a;cursor:pointer">
+      &#10005; CLEAR
+    </div>
+  </a>
+</div>
+""", unsafe_allow_html=True)
+
 
 ss('stop_requested', False)
 ss('raw_response', None)
