@@ -639,6 +639,7 @@ with bcol3:
         st.rerun()
 
 ss('stop_requested', False)
+ss('raw_response', None)
 
 if analyze_clicked:
     st.session_state['running'] = True
@@ -684,35 +685,33 @@ Return ONLY valid JSON (no markdown, no explanation):
       "topAnalysts":[{{"name":"...","firm":"...","accuracyPct":"XX%","rating":"Buy","target":"$X","thesis":"..."}}],
       "fundamentals":{{"revenue":{{"v":"$XB","sig":"good"}},"grossMargin":{{"v":"X%","sig":"good"}},"operatingMargin":{{"v":"X%","sig":"good"}},"netMargin":{{"v":"X%","sig":"good"}},"eps":{{"v":"$X","sig":"good"}},"forwardEPS":{{"v":"$X","sig":"ok"}},"peRatio":{{"v":"Xx","sig":"ok"}},"forwardPE":{{"v":"Xx","sig":"ok"}},"evEbitda":{{"v":"Xx","sig":"ok"}},"debtToEquity":{{"v":"X.X","sig":"ok"}},"freeCashFlow":{{"v":"$XB","sig":"good"}},"roe":{{"v":"X%","sig":"good"}},"divYield":{{"v":"X%","sig":"ok"}}}},
       "sectorAnalysis":{{
-        "sector":"Sector name e.g. Utilities / Semiconductors / Cloud Software",
-        "sectorOutlook":"2-3 sentences on current sector health, tailwinds, headwinds",
+        "sector":"Sector name",
+        "sectorOutlook":"1 sentence",
         "peerComparison":[
-          {{"peer":"Ticker","metric":"P/E or EV/EBITDA","peerVal":"X×","stockVal":"X×","verdict":"Premium/Discount/Inline"}},
-          {{"peer":"Ticker","metric":"Revenue Growth","peerVal":"X%","stockVal":"X%","verdict":"Above/Below/Inline"}},
-          {{"peer":"Ticker","metric":"Net Margin","peerVal":"X%","stockVal":"X%","verdict":"Above/Below/Inline"}},
-          {{"peer":"Ticker","metric":"FCF Yield","peerVal":"X%","stockVal":"X%","verdict":"Above/Below/Inline"}}
+          {{"peer":"Ticker","metric":"P/E","peerVal":"X×","stockVal":"X×","verdict":"Premium/Discount/Inline"}},
+          {{"peer":"Ticker","metric":"Rev Growth","peerVal":"X%","stockVal":"X%","verdict":"Above/Below/Inline"}},
+          {{"peer":"Ticker","metric":"Net Margin","peerVal":"X%","stockVal":"X%","verdict":"Above/Below/Inline"}}
         ],
-        "sectorRank":"e.g. Top quartile / Mid-tier / Laggard within sector",
-        "sectorCatalysts":"Key upcoming sector catalysts e.g. rate cuts, regulation, AI capex",
-        "sectorRisks":"Key sector-level risks e.g. margin compression, competition, regulation"
+        "sectorRank":"Top quartile/Mid-tier/Laggard",
+        "sectorCatalysts":"1 sentence",
+        "sectorRisks":"1 sentence"
       }},
       "riskAnalysis":{{
         "overallRiskRating":"Low/Medium/High/Very High",
         "riskScore":65,
-        "businessRisk":"Competitive threats, market share, business model vulnerabilities — 2 sentences",
-        "financialRisk":"Debt levels, liquidity, interest coverage, refinancing risk — 2 sentences",
-        "macroRisk":"Interest rate sensitivity, inflation exposure, GDP sensitivity — 2 sentences",
-        "regulatoryRisk":"Regulatory threats, antitrust, environmental, policy risk — 2 sentences",
-        "valuationRisk":"Downside if multiple compresses, earnings miss scenario — 2 sentences",
+        "businessRisk":"1 sentence",
+        "financialRisk":"1 sentence",
+        "macroRisk":"1 sentence",
+        "regulatoryRisk":"1 sentence",
+        "valuationRisk":"1 sentence",
         "keyRisks":[
-          {{"risk":"Short description","severity":"High/Medium/Low","likelihood":"High/Medium/Low","mitigation":"One sentence"}},
-          {{"risk":"Short description","severity":"High/Medium/Low","likelihood":"High/Medium/Low","mitigation":"One sentence"}},
-          {{"risk":"Short description","severity":"High/Medium/Low","likelihood":"High/Medium/Low","mitigation":"One sentence"}}
+          {{"risk":"description","severity":"High/Medium/Low","likelihood":"High/Medium/Low","mitigation":"1 sentence"}},
+          {{"risk":"description","severity":"High/Medium/Low","likelihood":"High/Medium/Low","mitigation":"1 sentence"}},
+          {{"risk":"description","severity":"High/Medium/Low","likelihood":"High/Medium/Low","mitigation":"1 sentence"}}
         ],
-        "bearCasePrice":"$X — price in worst-case scenario",
-        "bullCasePrice":"$X — price in best-case scenario"
+        "bearCasePrice":"$X","bullCasePrice":"$X"
       }},
-      "sections":{{"valuation":"2 sentences","momentum":"2 sentences","sentiment":"2 sentences"}}
+      "sections":{{"valuation":"1-2 sentences","momentum":"1-2 sentences","sentiment":"1-2 sentences"}}
     }}
   }}
 }}
@@ -788,23 +787,45 @@ Sections text: 2 sentences each, not 10 words — be informative."""
             enriched_prompt = prompt + live_data_block
 
             if st.session_state.get('stop_requested'):
-                st.warning("Analysis stopped by user.")
+                st.warning("Analysis stopped.")
                 st.session_state['running'] = False
                 st.stop()
 
             st.write("Running AI analysis and valuations...")
-            message = client.messages.create(
+            progress_bar = st.progress(0, text="Claude is thinking...")
+            token_counter = [0]
+            txt_chunks = []
+
+            # ── Use streaming so UI stays responsive and Stop works ──
+            with client.messages.stream(
                 model="claude-sonnet-4-5",
                 max_tokens=16000,
                 messages=[{"role": "user", "content": enriched_prompt}]
-            )
+            ) as stream:
+                for text_chunk in stream.text_stream:
+                    # Check stop flag on every chunk
+                    if st.session_state.get('stop_requested'):
+                        st.warning("Analysis stopped by user.")
+                        st.session_state['running'] = False
+                        st.stop()
+                    txt_chunks.append(text_chunk)
+                    token_counter[0] += 1
+                    # Update progress bar periodically
+                    if token_counter[0] % 50 == 0:
+                        pct = min(0.95, token_counter[0] / 800)
+                        progress_bar.progress(pct, text=f"Generating analysis... ({token_counter[0] * 4 // 1000}K tokens)")
+
+            progress_bar.progress(1.0, text="Finalizing...")
             st.write("Building report...")
-            txt = "".join(b.text for b in message.content if hasattr(b, 'text'))
+            txt = "".join(txt_chunks)
             parsed = parse_json(txt)
             if not parsed:
-                st.error(f"Could not parse response. Raw: {txt[:300]}")
+                st.error(f"Could not parse response. Raw preview: {txt[:400]}")
+                # Save raw for debugging
+                st.session_state['raw_response'] = txt
             else:
                 st.session_state['result'] = parsed
+                st.session_state['raw_response'] = None
                 st.session_state['data_source'] = "FMP + Claude" if fmp_contexts else "Claude only"
                 st.session_state['fmp_tickers'] = list(fmp_contexts.keys()) if fmp_contexts else []
                 status.update(label="Analysis complete!", state="complete")
