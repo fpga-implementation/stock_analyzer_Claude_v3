@@ -116,6 +116,27 @@ input::placeholder { color: rgba(255,255,255,0.4) !important; }
 
 hr { border-color: #111c2a !important; }
 .stAlert { background:#150505 !important; border:1px solid #dc2626 !important; color:#f87171 !important; }
+
+/* ── Stop button (col 2) - light red ── */
+div[data-testid="columns"] > div:nth-child(2) button {
+    background-color: #2d0a0a !important;
+    border: 1px solid #f87171 !important;
+    color: #fca5a5 !important;
+}
+div[data-testid="columns"] > div:nth-child(2) button:disabled {
+    background-color: #110303 !important;
+    border-color: #3d0a0a !important;
+    color: #3d1010 !important;
+}
+/* ── Clear button (col 3) - light yellow ── */
+div[data-testid="columns"] > div:nth-child(3) button {
+    background-color: #2d2500 !important;
+    border: 1px solid #fbbf24 !important;
+    color: #fde68a !important;
+}
+div[data-testid="columns"] > div:nth-child(3) button:hover {
+    background-color: #3d3200 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -583,14 +604,30 @@ btn_label = f"ANALYZE {len(valid_tickers)} STOCK{'S' if len(valid_tickers)!=1 el
 
 
 # ── Button row: Analyze | Stop | Clear ──
-st.markdown(
-    '<style>'
-    '#stop-wrap button { background-color: #2d0a0a !important; border: 1px solid #f87171 !important; color: #fca5a5 !important; }'
-    '#stop-wrap button:disabled { background-color: #110303 !important; border-color: #3d0a0a !important; color: #5a1a1a !important; }'
-    '#clear-wrap button { background-color: #2d2500 !important; border: 1px solid #fbbf24 !important; color: #fde68a !important; }'
-    '</style>',
-    unsafe_allow_html=True
-)
+st.markdown("""
+<style>
+#stop-wrap > div > button,
+#stop-wrap > div > div > button,
+#stop-wrap button {
+    background-color: #2d0a0a !important;
+    border: 1px solid #f87171 !important;
+    color: #fca5a5 !important;
+}
+#stop-wrap > div > button:disabled,
+#stop-wrap button:disabled {
+    background-color: #110303 !important;
+    border-color: #3d0a0a !important;
+    color: #3d0a0a !important;
+}
+#clear-wrap > div > button,
+#clear-wrap > div > div > button,
+#clear-wrap button {
+    background-color: #2d2500 !important;
+    border: 1px solid #fbbf24 !important;
+    color: #fde68a !important;
+}
+</style>
+""", unsafe_allow_html=True)
 bcol1, bcol2, bcol3 = st.columns([3, 1, 1])
 with bcol1:
     analyze_clicked = st.button(
