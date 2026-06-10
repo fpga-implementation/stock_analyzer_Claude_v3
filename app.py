@@ -620,12 +620,15 @@ with st.expander("▸ STOCKS TO ANALYZE — ticker symbols only (up to 5)", expa
         with c1:
             st.markdown(f'<div style="font-size:9px;color:#93c5fd;font-family:Syne,sans-serif;font-weight:700;padding-top:8px">#{i+1}</div>', unsafe_allow_html=True)
         with c2:
-            st.markdown('<div class="label">Ticker Symbol</div>', unsafe_allow_html=True)
-            st.session_state['tickers'][i] = st.text_input(
-                "Ticker or Company Name", value=st.session_state['tickers'][i],
-                placeholder="AAPL", key=f"tk{i}",
+            st.markdown('<div class="label">Ticker Symbol (e.g. AAPL)</div>', unsafe_allow_html=True)
+            raw_tk = st.text_input(
+                "Ticker Symbol", value=st.session_state['tickers'][i],
+                placeholder="AAPL", max_chars=6, key=f"tk{i}",
                 label_visibility="collapsed"
-            ).upper().strip()
+            )
+            # Strip spaces and non-ticker chars — prevent "ROCKETLAB" type errors
+            import re as _re_tk
+            st.session_state['tickers'][i] = _re_tk.sub(r'[^A-Z0-9.-]', '', raw_tk.upper().strip())
         with c3:
             st.markdown('<div class="label">Shares to Buy</div>', unsafe_allow_html=True)
             st.session_state['shares'][i] = st.text_input(
@@ -869,10 +872,28 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                 st.stop()
             client = anthropic.Anthropic(api_key=api_key)
 
-            # ── Step 1: Clean ticker symbols ──
+            # ── Step 1: Clean and validate ticker symbols ──
             resolved_tickers = [re.sub(r'[^A-Z0-9.-]', '', vt.upper().strip()) for vt in valid_tickers]
             resolved_tickers = [t for t in resolved_tickers if t]
-            st.write(f"Analyzing: {', '.join(resolved_tickers)}")
+            st.write(f"Validating tickers: {', '.join(resolved_tickers)}...")
+
+            # Validate each ticker — check Finnhub returns a real price
+            invalid_tickers = []
+            if finnhub_key:
+                for tk in resolved_tickers:
+                    fh = finnhub_quote(tk, finnhub_key)
+                    if not fh.get("c") or fh.get("c", 0) == 0:
+                        invalid_tickers.append(tk)
+                if invalid_tickers:
+                    st.error(
+                        f"⚠ Invalid ticker symbol{'s' if len(invalid_tickers)>1 else ''}: "
+                        f"**{', '.join(invalid_tickers)}**\n\n"
+                        f"Please enter valid stock ticker symbols (e.g. AAPL, NVDA, RKLB). "
+                        f"Company names are not supported."
+                    )
+                    st.session_state['running'] = False
+                    st.stop()
+            st.write(f"✓ Tickers valid: {', '.join(resolved_tickers)}")
             # ── Step 2: Fetch FMP fundamentals + Finnhub real-time prices in parallel ──
             fmp_contexts = {}
             finnhub_prices = {}  # ticker -> {c, pc, dp} real-time from Finnhub
