@@ -398,6 +398,84 @@ def format_fmp_context(ticker, raw):
     lines.append(f"=== END LIVE DATA FOR {ticker} ===")
     return "\n".join(lines)
 
+
+# ── Smart Intrinsic Value Calculator ──────────────────────────────────────────
+SECTOR_MULTIPLES = {
+    "Technology":             {"ev_rev": 8.0,  "kind": "growth"},
+    "Communication Services": {"ev_rev": 6.0,  "kind": "growth"},
+    "Healthcare":             {"ev_rev": 5.0,  "kind": "growth"},
+    "Consumer Discretionary": {"ev_rev": 2.0,  "kind": "mixed"},
+    "Utilities":              {"ev_ebitda": 10.0, "kind": "profitable"},
+    "Energy":                 {"ev_ebitda": 7.0,  "kind": "profitable"},
+    "Financials":             {"pb": 1.5,          "kind": "financial"},
+    "Industrials":            {"ev_ebitda": 12.0,  "kind": "profitable"},
+    "Materials":              {"ev_ebitda": 10.0,  "kind": "profitable"},
+    "Real Estate":            {"ev_ebitda": 20.0,  "kind": "profitable"},
+    "Consumer Staples":       {"ev_ebitda": 14.0,  "kind": "profitable"},
+}
+
+def calc_intrinsic_value(raw_fmp):
+    try:
+        q   = (raw_fmp.get("quote") or [{}])
+        q   = q[0] if isinstance(q,list) and q else q if isinstance(q,dict) else {}
+        inc = (raw_fmp.get("income") or [{}])
+        inc = inc[0] if isinstance(inc,list) and inc else {}
+        cf  = (raw_fmp.get("cashflow") or [{}])
+        cf  = cf[0] if isinstance(cf,list) and cf else {}
+        bs  = (raw_fmp.get("balance") or [{}])
+        bs  = bs[0] if isinstance(bs,list) and bs else {}
+        est = (raw_fmp.get("estimates") or [{}])
+        est = est[0] if isinstance(est,list) and est else {}
+        pro = (raw_fmp.get("profile") or [{}])
+        pro = pro[0] if isinstance(pro,list) and pro else pro if isinstance(pro,dict) else {}
+        price      = float(q.get("price") or 0)
+        mkt_cap    = float(q.get("marketCap") or 0)
+        shares     = float(q.get("sharesOutstanding") or 0)
+        if shares == 0 and price > 0 and mkt_cap > 0:
+            shares = mkt_cap / price
+        fcf        = float(cf.get("freeCashFlow") or 0)
+        net_income = float(inc.get("netIncome") or 0)
+        revenue    = float(inc.get("revenue") or 0)
+        ebitda     = float(inc.get("ebitda") or 0)
+        total_debt = float(bs.get("totalDebt") or 0)
+        cash_      = float(bs.get("cashAndCashEquivalents") or 0)
+        fwd_rev    = float(est.get("estimatedRevenueAvg") or 0)
+        book_val   = float(bs.get("totalStockholdersEquity") or 0)
+        net_debt   = total_debt - cash_
+        sector     = pro.get("sector","Technology")
+        dcf_raw = raw_fmp.get("dcf")
+        if isinstance(dcf_raw,list) and dcf_raw: dcf_raw = dcf_raw[0]
+        fmp_dcf = float(dcf_raw.get("dcf",0)) if isinstance(dcf_raw,dict) else 0
+        is_profitable = fcf > 0 and net_income > 0 and ebitda > 0
+        is_financial  = "financial" in sector.lower() or "bank" in sector.lower()
+        def fv(v): return f"${v:,.2f}"
+        if is_financial and book_val > 0 and shares > 0:
+            mult = SECTOR_MULTIPLES.get("Financials",{}).get("pb",1.5)
+            bvps = book_val / shares
+            iv   = bvps * mult
+            return (fv(iv), f"P/Book {mult}x (Financials - live)", f"Book/share {fv(bvps)} x {mult}x")
+        elif is_profitable and fmp_dcf > 0:
+            return (fv(fmp_dcf), "FMP DCF Model (live)", f"Live FCF {fv(fcf/1e9)}B")
+        elif is_profitable and ebitda > 0 and shares > 0:
+            mult = SECTOR_MULTIPLES.get(sector,{}).get("ev_ebitda",12.0)
+            iv   = max(0, (ebitda * mult - net_debt) / shares)
+            return (fv(iv), f"EV/EBITDA {mult}x ({sector} - live)", f"EBITDA {fv(ebitda/1e9)}B x {mult}x")
+        else:
+            rev_use   = fwd_rev if fwd_rev > 0 else revenue
+            rev_label = "forward" if fwd_rev > 0 else "TTM"
+            if rev_use <= 0 or shares <= 0: return (None, None, None)
+            mult = SECTOR_MULTIPLES.get(sector,{}).get("ev_rev", 8.0)
+            if revenue > 0 and fwd_rev > revenue:
+                growth = (fwd_rev - revenue) / revenue
+                if growth > 0.5:   mult = round(mult * 1.3, 1)
+                elif growth > 0.3: mult = round(mult * 1.15, 1)
+            iv = max(0, (rev_use * mult - net_debt) / shares)
+            return (fv(iv), f"EV/Revenue {mult}x {rev_label} (pre-profit - live)",
+                    f"{fv(rev_use/1e9)}B {rev_label} rev x {mult}x minus net debt")
+    except Exception:
+        return (None, None, None)
+# ──────────────────────────────────────────────────────────────────────────────
+
 def resolve_ticker_with_fmp(input_str, fmp_api_key):
     """Try to resolve a company name to a ticker using FMP search."""
     input_clean = input_str.strip()
@@ -882,6 +960,13 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                         locked["fwdRevenue"]     = fm(est.get("estimatedRevenueAvg")) if est.get("estimatedRevenueAvg") else "N/A"
                         locked["numAnalysts"]    = str(est.get("numberAnalystEstimatedRevenue","N/A"))
 
+                    # Calculate IV using correct model for this company type
+                    iv_val_c, iv_meth_c, iv_desc_c = calc_intrinsic_value(raw_fmp)
+                    if iv_val_c:
+                        locked['calcIV']       = iv_val_c
+                        locked['calcIVMethod'] = iv_meth_c
+                        locked['calcIVDesc']   = iv_desc_c
+
                     locked_data[tk] = locked
 
                     # Build locked data section for prompt
@@ -957,30 +1042,26 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                                     s_data["pricing"]["analystConsensus"] = lk["analystConsensus"]
                                 if lk.get("analystTargetHigh") and lk.get("analystTargetLow"):
                                     s_data["pricing"]["targetRange"] = f"${lk['analystTargetLow']} – ${lk['analystTargetHigh']}"
-                                if lk.get("fmpDCF"):
-                                    s_data["pricing"]["fmpDCFValue"] = lk["fmpDCF"]
-                                    # Use FMP DCF as the primary intrinsic value
-                                    s_data["pricing"]["intrinsicValue"] = lk["fmpDCF"]
-                                    s_data["pricing"]["intrinsicMethod"] = "FMP DCF Model (live)"
-                                    # Also update ivBreakdown DCF entry if it exists
-                                    if "ivBreakdown" in s_data and isinstance(s_data["ivBreakdown"], list):
-                                        for iv in s_data["ivBreakdown"]:
-                                            if isinstance(iv, dict) and "DCF" in iv.get("method","").upper():
-                                                iv["value"] = lk["fmpDCF"]
-                                                iv["desc"] = "Source: Financial Modeling Prep DCF model (live data)"
-                                                break
-                                        else:
-                                            # Insert FMP DCF as first entry
-                                            s_data["ivBreakdown"].insert(0, {
-                                                "method": "FMP DCF",
-                                                "value": lk["fmpDCF"],
-                                                "desc": "Source: Financial Modeling Prep DCF model (live data)"
-                                            })
-                                    # Update comparisonTable intrinsicValue too
-                                    if parsed.get("comparisonTable"):
-                                        for row in parsed["comparisonTable"]:
-                                            if row.get("ticker","").upper() == tk_key.upper():
-                                                row["intrinsicValue"] = lk["fmpDCF"]
+                                # Python-calculated IV — right model per company type
+                                if lk.get('calcIV'):
+                                    s_data['pricing']['intrinsicValue']  = lk['calcIV']
+                                    s_data['pricing']['intrinsicMethod'] = lk.get('calcIVMethod','Live calculation')
+                                    primary_iv = {'method': lk.get('calcIVMethod','Live IV'),
+                                                  'value':  lk['calcIV'],
+                                                  'desc':   lk.get('calcIVDesc','Calculated from live FMP data')}
+                                    if not isinstance(s_data.get('ivBreakdown'), list):
+                                        s_data['ivBreakdown'] = []
+                                    if s_data['ivBreakdown']:
+                                        s_data['ivBreakdown'][0] = primary_iv
+                                    else:
+                                        s_data['ivBreakdown'].insert(0, primary_iv)
+                                    if parsed.get('comparisonTable'):
+                                        for row in parsed['comparisonTable']:
+                                            if row.get('ticker','').upper() == tk_key.upper():
+                                                row['intrinsicValue'] = lk['calcIV']
+                                elif lk.get('fmpDCF'):
+                                    s_data['pricing']['intrinsicValue']  = lk['fmpDCF']
+                                    s_data['pricing']['intrinsicMethod'] = 'FMP DCF Model (live)'
                                 if "fundamentals" not in s_data or not s_data["fundamentals"]:
                                     s_data["fundamentals"] = {}
                                 f = s_data["fundamentals"]
