@@ -235,6 +235,21 @@ def finnhub_quote(ticker, fh_key):
     except Exception as e:
         return {"_error": str(e)}
 
+def finnhub_sentiment(ticker, fh_key):
+    """Fetch news sentiment from Finnhub /news-sentiment endpoint.
+    Returns dict with buzz score, sentiment score, weekly/monthly article counts."""
+    if not fh_key: return {}
+    import re as _re
+    clean = _re.sub(r'[^A-Z0-9.-]', '', ticker.upper().strip())
+    url = f"https://finnhub.io/api/v1/news-sentiment?symbol={clean}&token={fh_key}"
+    try:
+        with urllib.request.urlopen(url, timeout=8) as r:
+            data = json.loads(r.read().decode())
+            if not data or not data.get("buzz"): return {}
+            return data
+    except Exception:
+        return {}
+
 def fmp_get(endpoint, fmp_api_key, params=None):
     """Fetch a single FMP endpoint. Returns dict/list or None on error."""
     base = "https://financialmodelingprep.com/api"
@@ -261,7 +276,8 @@ def fmp_fetch_all(ticker, fmp_api_key):
         "targets":     f"/v4/price-target-consensus",
         "target_list": f"/v4/price-target",
         "dcf":         f"/v3/discounted-cash-flow/{ticker}",
-        "earnings_est":f"/v3/earnings-surprises/{ticker}",
+        "earnings_est":   f"/v3/earnings-surprises/{ticker}",
+        "earnings_next":  f"/v3/historical/earning_calendar/{ticker}",
     }
     results = {}
     def fetch_one(key, ep):
@@ -751,6 +767,7 @@ ss('raw_response', None)
 ss('fmp_raw_data', {})
 ss('fmp_locked', {})
 ss('finnhub_prices', {})
+ss('finnhub_sentiment_data', {})
 
 if analyze_clicked and not st.session_state['running']:
     # Phase 1: set running=True and rerun so Stop button activates BEFORE analysis starts
@@ -903,17 +920,17 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                 st.write(f"Fetching live market data for {', '.join(resolved_tickers)}...")
                 # Fetch FMP + Finnhub simultaneously
                 def fetch_ticker(tk):
-                    # Ensure ticker is a clean symbol before API calls
                     import re as _re2
-                    clean_tk = _re2.sub(r'[^A-Z0-9.-]', '', tk.upper().upper().strip())
-                    fmp_raw = fmp_fetch_all(clean_tk, fmp_key)
+                    clean_tk = _re2.sub(r'[^A-Z0-9.-]', '', tk.upper().strip())
+                    fmp_raw  = fmp_fetch_all(clean_tk, fmp_key)
                     fh_quote = finnhub_quote(clean_tk, finnhub_key) if finnhub_key else {}
-                    return tk, fmp_raw, fh_quote
+                    fh_sent  = finnhub_sentiment(clean_tk, finnhub_key) if finnhub_key else {}
+                    return tk, fmp_raw, fh_quote, fh_sent
 
                 with ThreadPoolExecutor(max_workers=5) as ex:
                     futures = {ex.submit(fetch_ticker, tk): tk for tk in resolved_tickers}
                     for fut in as_completed(futures):
-                        tk, raw, fh = fut.result()
+                        tk, raw, fh, fh_sent = fut.result()
                         # Override FMP quote price with Finnhub real-time price
                         if fh.get("c") and fh["c"] > 0:
                             if isinstance(raw.get("quote"), list) and raw["quote"]:
@@ -936,6 +953,10 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                         if 'fmp_raw_data' not in st.session_state:
                             st.session_state['fmp_raw_data'] = {}
                         st.session_state['fmp_raw_data'][tk] = raw
+                        if fh_sent:
+                            if 'finnhub_sentiment_data' not in st.session_state:
+                                st.session_state['finnhub_sentiment_data'] = {}
+                            st.session_state['finnhub_sentiment_data'][tk] = fh_sent
                 st.session_state['finnhub_prices'] = finnhub_prices
             else:
                 st.warning("⚠ FMP_API_KEY not set — using Claude training data only.")
@@ -1017,6 +1038,19 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                         locked["fwdRevenue"]     = fm(est.get("estimatedRevenueAvg")) if est.get("estimatedRevenueAvg") else "N/A"
                         locked["numAnalysts"]    = str(est.get("numberAnalystEstimatedRevenue","N/A"))
 
+                    # Next earnings date from FMP earnings calendar
+                    from datetime import datetime as _dt
+                    today_str = _dt.now().strftime("%Y-%m-%d")
+                    earn_cal = raw_fmp.get("earnings_next") or []
+                    if isinstance(earn_cal, list):
+                        future = [e for e in earn_cal if e.get("date","") >= today_str]
+                        future.sort(key=lambda x: x.get("date",""))
+                        if future:
+                            ne = future[0]
+                            locked["nextEarningsDate"]  = ne.get("date","N/A")
+                            locked["nextEarningsEPS"]   = ne.get("epsEstimated","N/A")
+                            locked["nextEarningsTiming"] = ne.get("time","N/A")  # amc/bmo
+
                     # Calculate IV using correct model for this company type
                     iv_val_c, iv_meth_c, iv_desc_c = calc_intrinsic_value(raw_fmp)
                     if iv_val_c:
@@ -1024,12 +1058,31 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                         locked['calcIVMethod'] = iv_meth_c
                         locked['calcIVDesc']   = iv_desc_c
 
+                    # Add Finnhub news sentiment to locked data
+                    fh_sent_data = st.session_state.get('finnhub_sentiment_data', {}).get(tk, {})
+                    if fh_sent_data:
+                        buzz  = fh_sent_data.get('buzz', {})
+                        sent  = fh_sent_data.get('sentiment', {})
+                        locked['buzzScore']          = buzz.get('buzz', 'N/A')
+                        locked['buzzArticlesWeekly'] = buzz.get('weeklyAverage', 'N/A')
+                        locked['sentimentBullish']   = sent.get('bullishPercent', 'N/A')
+                        locked['sentimentBearish']   = sent.get('bearishPercent', 'N/A')
+                        locked['companyNewsScore']   = fh_sent_data.get('companyNewsScore', 'N/A')
+                        locked['sectorAvgBullish']   = fh_sent_data.get('sectorAverageBullishPercent', 'N/A')
+                        locked['sectorNewsScore']    = fh_sent_data.get('sectorAverageNewsScore', 'N/A')
+
                     locked_data[tk] = locked
 
                     # Build locked data section for prompt
-                    locked_lines.append(f"\n--- LOCKED LIVE DATA FOR {tk} (from FMP — these values ARE FINAL, do not change them) ---")
+                    locked_lines.append(f"\n--- LOCKED LIVE DATA FOR {tk} (from FMP/Finnhub — use these exact values) ---")
                     for k, v in locked.items():
                         locked_lines.append(f"  {k}: {v}")
+                    # Explain sentiment fields
+                    if locked.get("buzzScore") not in (None,"N/A"):
+                        locked_lines.append(f"  [Finnhub News Sentiment] buzzScore={locked.get('buzzScore')} (higher=more buzz vs historical avg)")
+                        locked_lines.append(f"  [Finnhub News Sentiment] bullish%={locked.get('sentimentBullish')} bearish%={locked.get('sentimentBearish')}")
+                        locked_lines.append(f"  [Finnhub News Sentiment] companyNewsScore={locked.get('companyNewsScore')} (0-1, higher=more positive)")
+                        locked_lines.append(f"  [Finnhub News Sentiment] sectorAvgBullish%={locked.get('sectorAvgBullish')} (benchmark)")
                     locked_lines.append(f"--- END LOCKED DATA FOR {tk} ---")
 
                 live_data_block = (
@@ -1386,6 +1439,37 @@ if st.session_state['result']:
         shares_part  = esc(cur_shares) if cur_shares else ""
         inputas_part = ("entered as: " + input_as) if (input_as and input_as.upper() != tk) else ""
 
+        # Sentiment for verdict card
+        fh_sent_card = st.session_state.get('finnhub_sentiment_data',{}).get(tk,{})
+        sent_data_card = fh_sent_card.get('sentiment',{})
+        bull_card = sent_data_card.get('bullishPercent')
+        if bull_card is not None:
+            bull_f_card = float(bull_card)
+            bull_pct_card = f'{bull_f_card*100:.0f}%' if bull_f_card<=1 else f'{bull_f_card:.0f}%'
+            sent_label_card = 'Bullish' if bull_f_card>0.55 else ('Bearish' if bull_f_card<0.45 else 'Neutral')
+            sent_color_card = '#4ade80' if bull_f_card>0.55 else ('#f87171' if bull_f_card<0.45 else '#fbbf24')
+            sent_display = f'<span style="color:{sent_color_card};font-weight:700">{sent_label_card} ({bull_pct_card} bullish)</span>'
+        elif sent_num is not None:
+            s_col = '#4ade80' if sent_num>=60 else ('#f87171' if sent_num<=35 else '#fbbf24')
+            sent_display = f'<span style="color:{s_col};font-weight:700">{sent_num}/100</span>'
+        else:
+            sent_display = '<span style="color:#94a3b8">N/A</span>'
+
+        # Next earnings date
+        lk_card = st.session_state.get('fmp_locked',{}).get(tk,{})
+        next_earn = lk_card.get('nextEarningsDate','')
+        earn_timing = lk_card.get('nextEarningsTiming','')
+        earn_eps = lk_card.get('nextEarningsEPS','')
+        timing_map = {'amc':'After Close','bmo':'Before Open','dmh':'During Hours'}
+        earn_timing_disp = timing_map.get(str(earn_timing).lower(),'') if earn_timing and str(earn_timing)!='N/A' else ''
+        if next_earn and next_earn != 'N/A':
+            earn_disp = f'<span style="color:#fbbf24;font-weight:700">{next_earn}</span>'
+            if earn_timing_disp: earn_disp += f' <span style="color:#94a3b8;font-size:9px">({earn_timing_disp})</span>'
+            if earn_eps and str(earn_eps)!='N/A': earn_disp += f' <span style="color:#94a3b8;font-size:9px">Est EPS: ${earn_eps}</span>'
+        else:
+            earn_disp = '<span style="color:#94a3b8">Not available</span>'
+
+
         # Price strip — intrinsic value, consensus, entry
         # Current price — from FMP quote or Claude response
         cur_price_display = s.get('currentPrice','')
@@ -1440,6 +1524,13 @@ if st.session_state['result']:
             if shares_part:
                 html += f'<span style="font-size:13px;color:#cbd5e1"> &nbsp;&#183;&nbsp; {shares_part} shares</span>'
             html += '</div>'
+        # Sentiment row
+        html += (
+            f'<div style="display:flex;gap:16px;margin-top:6px;padding-top:6px;border-top:1px solid #1a2e48">'
+            f'<div><span style="font-size:9px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">Sentiment </span>{sent_display}</div>'
+            f'<div><span style="font-size:9px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">Next Earnings </span>{earn_disp}</div>'
+            f'</div>'
+        )
         html += (
             f'</div>'  # left side
             f'<div style="text-align:right">'
@@ -1563,6 +1654,17 @@ if st.session_state['result']:
             # Sentiment + Risk
             sent_label = "Bearish" if sent_num and sent_num <= 35 else ("Neutral" if sent_num and sent_num <= 50 else ("Slightly Bullish" if sent_num and sent_num <= 70 else "Bullish"))
             sent_color = "#f87171" if sent_num and sent_num <= 35 else ("#fbbf24" if sent_num and sent_num <= 50 else "#4ade80")
+            # Finnhub news sentiment for this ticker
+            fh_sent_tk  = st.session_state.get('finnhub_sentiment_data',{}).get(tk,{})
+            buzz_data   = fh_sent_tk.get('buzz',{})
+            sent_data_f = fh_sent_tk.get('sentiment',{})
+            bull_pct    = sent_data_f.get('bullishPercent')
+            bear_pct    = sent_data_f.get('bearishPercent')
+            buzz_score  = buzz_data.get('buzz')
+            news_score  = fh_sent_tk.get('companyNewsScore')
+            sec_avg     = fh_sent_tk.get('sectorAverageBullishPercent')
+            has_fh_sent = bull_pct is not None
+
             sc1, sc2 = st.columns(2)
             with sc1:
                 st.markdown(f"""
@@ -1576,6 +1678,41 @@ if st.session_state['result']:
                   <div class="label">Risk Profile</div>
                   <div style="font-size:13px;color:#e2e8f0;line-height:1.8">{s.get('sections',{}).get('risk','—')}</div>
                 </div>""", unsafe_allow_html=True)
+
+
+            # ── Finnhub News Sentiment Card ──
+            if has_fh_sent:
+                try:
+                    bull_f = float(bull_pct) if bull_pct is not None else 0
+                    bear_f = float(bear_pct) if bear_pct is not None else 0
+                    bull_disp = f'{bull_f*100:.0f}%' if bull_f<=1 else f'{bull_f:.0f}%'
+                    bear_disp = f'{bear_f*100:.0f}%' if bear_f<=1 else f'{bear_f:.0f}%'
+                    buzz_f = float(buzz_score) if buzz_score else None
+                    news_f = float(news_score) if news_score else None
+                    sec_f  = float(sec_avg) if sec_avg else None
+                    sec_disp = f'{sec_f*100:.0f}%' if sec_f and sec_f<=1 else (f'{sec_f:.0f}%' if sec_f else 'N/A')
+                    bull_clr  = '#4ade80' if bull_f > bear_f else '#f87171'
+                    buzz_clr  = '#4ade80' if buzz_f and buzz_f>1.0 else ('#f87171' if buzz_f and buzz_f<0.5 else '#fbbf24')
+                    buzz_lbl  = 'Above avg' if buzz_f and buzz_f>1.0 else ('Below avg' if buzz_f and buzz_f<0.5 else 'Avg')
+                    news_clr  = '#4ade80' if news_f and news_f>0.6 else ('#f87171' if news_f and news_f<0.4 else '#fbbf24')
+                    st.markdown(f'''
+                    <div class="card" style="padding:12px;margin-bottom:10px;border-color:#3b82f644">
+                      <div class="label" style="margin-bottom:8px">📡 FINNHUB NEWS SENTIMENT (LIVE)</div>
+                      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+                        <div><div style="font-size:9px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Bullish News</div>
+                          <div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;color:{bull_clr}">{bull_disp}</div></div>
+                        <div><div style="font-size:9px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Bearish News</div>
+                          <div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;color:#f87171">{bear_disp}</div></div>
+                        <div><div style="font-size:9px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Buzz Score</div>
+                          <div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;color:{buzz_clr}">{f'{buzz_f:.2f}' if buzz_f else 'N/A'}</div>
+                          <div style="font-size:9px;color:#94a3b8">{buzz_lbl} vs hist</div></div>
+                        <div><div style="font-size:9px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">News Score</div>
+                          <div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;color:{news_clr}">{f'{news_f:.2f}' if news_f else 'N/A'}</div>
+                          <div style="font-size:9px;color:#94a3b8">Sector: {sec_disp} bull</div></div>
+                      </div>
+                    </div>''', unsafe_allow_html=True)
+                except Exception:
+                    pass
 
             # Portfolio insights
             pi = s.get('portfolioInsights', {})
@@ -1641,98 +1778,4 @@ if st.session_state['result']:
                           <td style="color:#f0f6ff;font-weight:700">{p.get("stockVal","—")}</td>
                           <td><span style="color:{v_color};font-size:10px">{v}</span></td>
                         </tr>"""
-                    st.markdown(f'<table class="data-table"><thead><tr><th>Peer</th><th>Metric</th><th>Peer</th><th>This Stock</th><th>vs Peer</th></tr></thead><tbody>{peer_rows}</tbody></table>', unsafe_allow_html=True)
-
-                # Sector catalysts + risks
-                cat_risk_html = f"""
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
-                  <div class="card card-green" style="padding:11px">
-                    <div class="label">Sector Catalysts</div>
-                    <div style="font-size:13px;color:#e2e8f0;line-height:1.8;margin-top:4px">{sa.get("sectorCatalysts","—")}</div>
-                  </div>
-                  <div class="card" style="padding:11px;border-color:#dc262644;background:#150505">
-                    <div class="label">Sector Risks</div>
-                    <div style="font-size:13px;color:#e2e8f0;line-height:1.8;margin-top:4px">{sa.get("sectorRisks","—")}</div>
-                  </div>
-                </div>"""
-                st.markdown(cat_risk_html, unsafe_allow_html=True)
-
-            # ── DETAILED RISK ANALYSIS ──
-            ra = s.get('riskAnalysis', {})
-            if ra:
-                # Risk rating header
-                rating = ra.get("overallRiskRating","Medium")
-                risk_score = ra.get("riskScore", 50)
-                try: risk_score = int(risk_score)
-                except: risk_score = 50
-                r_color = "#4ade80" if rating=="Low" else "#fbbf24" if rating=="Medium" else "#f87171" if rating=="High" else "#dc2626"
-
-                st.markdown(f'<div class="sec-hdr">⚠ Detailed Risk Analysis</div>', unsafe_allow_html=True)
-                st.markdown(f"""
-                <div style="display:flex;align-items:center;gap:16px;padding:12px;background:#090f1a;border:1px solid #111c2a;margin-bottom:10px">
-                  <div>
-                    <div class="label">Overall Risk Rating</div>
-                    <div style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:{r_color}">{rating}</div>
-                  </div>
-                  <div>
-                    <div class="label">Risk Score</div>
-                    <div style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:{r_color}">{risk_score}<span style="font-size:12px;color:#5a7a99">/100</span></div>
-                  </div>
-                  <div style="flex:1">
-                    <div class="label" style="margin-bottom:5px">Risk Meter</div>
-                    <div style="height:6px;background:#1a2e48;border-radius:3px">
-                      <div style="height:6px;width:{risk_score}%;background:{r_color};border-radius:3px;transition:width 0.5s"></div>
-                    </div>
-                  </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                # Risk categories
-                risk_cats = [
-                    ("Business Risk", "businessRisk", "🏢"),
-                    ("Financial Risk", "financialRisk", "💰"),
-                    ("Macro Risk", "macroRisk", "🌐"),
-                    ("Regulatory Risk", "regulatoryRisk", "⚖️"),
-                    ("Valuation Risk", "valuationRisk", "📊"),
-                ]
-                for lbl, key, icon in risk_cats:
-                    if ra.get(key):
-                        st.markdown(f'<div class="sec-body" style="margin-bottom:6px"><span style="color:#3b82f6;font-family:Syne,sans-serif;font-size:9px;letter-spacing:1px">{icon} {lbl}: </span>{ra[key]}</div>', unsafe_allow_html=True)
-
-                # Key risks table
-                key_risks = ra.get("keyRisks", [])
-                if key_risks:
-                    st.markdown('<div style="font-size:8px;letter-spacing:2px;color:#94a3b8;text-transform:uppercase;margin:10px 0 7px">Key Risk Factors</div>', unsafe_allow_html=True)
-                    risk_rows = ""
-                    for kr in key_risks:
-                        sev = kr.get("severity","Medium")
-                        lik = kr.get("likelihood","Medium")
-                        sev_color = "#f87171" if sev=="High" else "#fbbf24" if sev=="Medium" else "#4ade80"
-                        lik_color = "#f87171" if lik=="High" else "#fbbf24" if lik=="Medium" else "#4ade80"
-                        risk_rows += f"""<tr>
-                          <td style="color:#e2e8f0">{kr.get("risk","")}</td>
-                          <td><span style="color:{sev_color};font-size:10px">● {sev}</span></td>
-                          <td><span style="color:{lik_color};font-size:10px">● {lik}</span></td>
-                          <td style="font-size:12px;color:#cbd5e1">{kr.get("mitigation","")}</td>
-                        </tr>"""
-                    st.markdown(f'<table class="data-table"><thead><tr><th>Risk</th><th>Severity</th><th>Likelihood</th><th>Mitigation</th></tr></thead><tbody>{risk_rows}</tbody></table>', unsafe_allow_html=True)
-
-                # Bull/Bear case prices
-                if ra.get("bearCasePrice") or ra.get("bullCasePrice"):
-                    bc1, bc2 = st.columns(2)
-                    with bc1:
-                        st.markdown(f"""
-                        <div class="card" style="padding:11px;border-color:#dc262644;background:#150505">
-                          <div class="label">Bear Case Price</div>
-                          <div style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:#f87171">{ra.get("bearCasePrice","—")}</div>
-                          <div style="font-size:11px;color:#cbd5e1;margin-top:3px">Worst-case scenario</div>
-                        </div>""", unsafe_allow_html=True)
-                    with bc2:
-                        st.markdown(f"""
-                        <div class="card card-green" style="padding:11px">
-                          <div class="label">Bull Case Price</div>
-                          <div style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:#4ade80">{ra.get("bullCasePrice","—")}</div>
-                          <div style="font-size:11px;color:#cbd5e1;margin-top:3px">Best-case scenario</div>
-                        </div>""", unsafe_allow_html=True)
-
-    st.markdown('<div class="disc">FOR INFORMATIONAL PURPOSES ONLY — NOT FINANCIAL ADVICE</div>', unsafe_allow_html=True)
+                    st.markdown(f'<table class="data-table"><thead><tr><th>Peer</th><th>Metric</th><th>Peer</th><th>This Stock</th><th>vs Peer</th></tr></thead><tbody>{peer_rows}</tbody>
