@@ -220,16 +220,16 @@ FUND_LABELS = [
 
 def finnhub_quote(ticker, fh_key):
     """Fetch real-time quote from Finnhub. Returns dict with c=current, pc=prev_close, dp=chg_pct."""
-    if not fh_key: return {}
+    if not fh_key: return {"_error": "no key"}
     url = f"https://finnhub.io/api/v1/quote?symbol={ticker}&token={fh_key}"
     try:
-        with urllib.request.urlopen(url, timeout=5) as r:
+        with urllib.request.urlopen(url, timeout=8) as r:
             data = json.loads(r.read().decode())
-            # c=0 means no data
-            if data.get("c",0) == 0: return {}
+            if data.get("c",0) == 0:
+                return {"_error": f"price=0 or no data for {ticker}"}
             return data
-    except Exception:
-        return {}
+    except Exception as e:
+        return {"_error": str(e)}
 
 def fmp_get(endpoint, fmp_api_key, params=None):
     """Fetch a single FMP endpoint. Returns dict/list or None on error."""
@@ -914,10 +914,15 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                             elif isinstance(raw.get("quote"), dict):
                                 raw["quote"]["price"] = fh["c"]
                                 raw["quote"]["changesPercentage"] = fh.get("dp", 0)
+                            else:
+                                # quote missing — create it
+                                raw["quote"] = [{"price": fh["c"], "changesPercentage": fh.get("dp",0)}]
                             finnhub_prices[tk] = fh
-                            src = "Finnhub (real-time) + FMP (fundamentals)"
+                            src = f"Finnhub ${fh['c']:,.2f} (real-time) + FMP (fundamentals)"
+                        elif fh.get("_error"):
+                            src = f"FMP only — Finnhub error: {fh['_error']}"
                         else:
-                            src = "FMP"
+                            src = "FMP only (Finnhub returned no price)"
                         fmp_contexts[tk] = format_fmp_context(tk, raw)
                         st.write(f"  ✓ {tk} data fetched ({src})")
                         if 'fmp_raw_data' not in st.session_state:
@@ -1241,10 +1246,25 @@ if st.session_state['result']:
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # ── Top 2 picks ──
+    # ── Top 2 picks — filter out N/A placeholders and limit to real stocks ──
+    real_top2 = [t for t in top2 if t.get('ticker','').upper() not in ('N/A','','NONE')
+                 and t.get('companyName','').lower() not in ('n/a','only one stock analyzed','')]
+    # Also deduplicate by ticker
+    seen_t2 = set()
+    deduped_top2 = []
+    for t in real_top2:
+        tk = t.get('ticker','')
+        if tk not in seen_t2:
+            seen_t2.add(tk)
+            deduped_top2.append(t)
+    # Don't show more picks than stocks analyzed
+    deduped_top2 = deduped_top2[:min(len(sorted_stocks), 2)]
+
     st.markdown("## ★ TOP PICKS TO BUY")
-    t2cols = st.columns(min(len(top2), 2))
-    for i, t in enumerate(top2[:2]):
+    if not deduped_top2:
+        st.markdown('<div style="color:#94a3b8;font-size:12px;padding:10px 0">No top picks generated.</div>', unsafe_allow_html=True)
+    t2cols = st.columns(max(len(deduped_top2), 1))
+    for i, t in enumerate(deduped_top2):
         with t2cols[i]:
             cls = 'card-gold' if i == 0 else 'card-gray'
             lbl = '#1 Best Pick' if i == 0 else '#2 Runner-Up'
@@ -1286,6 +1306,7 @@ if st.session_state['result']:
                 unsafe_allow_html=True
             )
 
+    top2 = deduped_top2  # use cleaned list for rest of page
     if data.get('rankingSummary'):
         st.markdown(f"""
         <div style="padding:10px 12px;background:#090f1a;border:1px solid #111c2a;font-size:11px;color:#e2e8f0;line-height:1.8;margin-top:4px">
