@@ -221,7 +221,11 @@ FUND_LABELS = [
 def finnhub_quote(ticker, fh_key):
     """Fetch real-time quote from Finnhub. Returns dict with c=current, pc=prev_close, dp=chg_pct."""
     if not fh_key: return {"_error": "no key"}
-    url = f"https://finnhub.io/api/v1/quote?symbol={ticker}&token={fh_key}"
+    # Safety: strip spaces and non-alphanumeric chars — Finnhub needs clean symbol
+    import re as _re
+    clean_ticker = _re.sub(r'[^A-Z0-9.-]', '', ticker.upper().strip())
+    if not clean_ticker: return {"_error": "invalid ticker"}
+    url = f"https://finnhub.io/api/v1/quote?symbol={clean_ticker}&token={fh_key}"
     try:
         with urllib.request.urlopen(url, timeout=8) as r:
             data = json.loads(r.read().decode())
@@ -490,14 +494,22 @@ def calc_intrinsic_value(raw_fmp):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def resolve_ticker_with_fmp(input_str, fmp_api_key):
-    """Try to resolve a company name to a ticker using FMP search."""
+    """Resolve a company name or ticker to a valid ticker symbol."""
     input_clean = input_str.strip()
-    # If it looks like a ticker already (<=6 chars, mostly uppercase letters) return as-is
-    if len(input_clean) <= 6 and re.match(r'^[A-Za-z.\-]+$', input_clean):
+    if not input_clean: return ""
+    # If it looks like a ticker already (1-6 chars, letters/dots/hyphens only) return uppercase
+    if len(input_clean) <= 6 and re.match(r'^[A-Za-z.-]+$', input_clean):
         return input_clean.upper()
-    # Otherwise search FMP
-    data = fmp_get("/v3/search", fmp_api_key, {"query": input_clean, "limit": 1, "exchange": "NASDAQ,NYSE"})
-    if data and isinstance(data, list) and data:
+    # Search FMP for the company name
+    data = fmp_get("/v3/search", fmp_api_key, {"query": input_clean, "limit": 5, "exchange": "NASDAQ,NYSE,AMEX"})
+    if data and isinstance(data, list):
+        # Prefer exact or close name match
+        for item in data:
+            sym = item.get("symbol","")
+            name = item.get("name","").lower()
+            if input_clean.lower() in name or name in input_clean.lower():
+                return sym.upper()
+        # Fall back to first result
         return data[0].get("symbol", input_clean.upper())
     return input_clean.upper()
 
@@ -898,8 +910,11 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                 st.write(f"Fetching live market data for {', '.join(resolved_tickers)}...")
                 # Fetch FMP + Finnhub simultaneously
                 def fetch_ticker(tk):
-                    fmp_raw = fmp_fetch_all(tk, fmp_key)
-                    fh_quote = finnhub_quote(tk, finnhub_key) if finnhub_key else {}
+                    # Ensure ticker is a clean symbol before API calls
+                    import re as _re2
+                    clean_tk = _re2.sub(r'[^A-Z0-9.-]', '', tk.upper().strip())
+                    fmp_raw = fmp_fetch_all(clean_tk, fmp_key)
+                    fh_quote = finnhub_quote(clean_tk, finnhub_key) if finnhub_key else {}
                     return tk, fmp_raw, fh_quote
 
                 with ThreadPoolExecutor(max_workers=5) as ex:
