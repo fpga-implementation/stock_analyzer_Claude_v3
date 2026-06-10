@@ -497,20 +497,37 @@ def resolve_ticker_with_fmp(input_str, fmp_api_key):
     """Resolve a company name or ticker to a valid ticker symbol."""
     input_clean = input_str.strip()
     if not input_clean: return ""
-    # If it looks like a ticker already (1-6 chars, letters/dots/hyphens only) return uppercase
+    # If it already looks like a ticker (1-6 chars, only letters/dots) return as-is
     if len(input_clean) <= 6 and re.match(r'^[A-Za-z.-]+$', input_clean):
         return input_clean.upper()
-    # Search FMP for the company name
-    data = fmp_get("/v3/search", fmp_api_key, {"query": input_clean, "limit": 5, "exchange": "NASDAQ,NYSE,AMEX"})
-    if data and isinstance(data, list):
-        # Prefer exact or close name match
-        for item in data:
-            sym = item.get("symbol","")
-            name = item.get("name","").lower()
-            if input_clean.lower() in name or name in input_clean.lower():
-                return sym.upper()
-        # Fall back to first result
-        return data[0].get("symbol", input_clean.upper())
+    # Search FMP — try both with and without exchange filter
+    for exchange_filter in ["NASDAQ,NYSE,AMEX", ""]:
+        params = {"query": input_clean, "limit": 10}
+        if exchange_filter:
+            params["exchange"] = exchange_filter
+        data = fmp_get("/v3/search", fmp_api_key, params)
+        if data and isinstance(data, list):
+            input_lower = input_clean.lower()
+            # Score each result
+            best_sym = None
+            best_score = 0
+            for item in data:
+                sym  = item.get("symbol","")
+                name = item.get("name","").lower()
+                score = 0
+                if input_lower == name: score = 100
+                elif input_lower in name: score = 50 + (len(input_lower)/len(name))*30
+                elif name in input_lower: score = 40
+                # Bonus for short tickers (more likely to be the main listing)
+                if len(sym) <= 5: score += 5
+                if score > best_score:
+                    best_score = score
+                    best_sym = sym
+            if best_sym and best_score > 20:
+                return best_sym.upper()
+            # Fall back to first result
+            if data[0].get("symbol"):
+                return data[0]["symbol"].upper()
     return input_clean.upper()
 
 
@@ -893,14 +910,24 @@ Sections text: 2 sentences each, not 10 words — be informative."""
             client = anthropic.Anthropic(api_key=api_key)
 
             # ── Step 1: Resolve tickers ──
+            # Clean and resolve each input to a valid ticker symbol
             resolved_tickers = []
+            ticker_map = {}  # original input -> resolved ticker
             for vt in valid_tickers:
                 if fmp_key:
                     rt = resolve_ticker_with_fmp(vt, fmp_key)
                 else:
                     rt = vt.upper().strip()
+                # Safety check: if result still has spaces or is >6 chars, it's a name not a ticker
+                # Try to extract just the ticker part or strip spaces
+                import re as _re3
+                rt_clean = _re3.sub(r'[^A-Z0-9.-]', '', rt.upper().strip())
+                if not rt_clean:
+                    rt_clean = vt.upper().strip()[:6]
+                rt = rt_clean
                 resolved_tickers.append(rt)
-            st.write(f"Resolved: {', '.join(resolved_tickers)}")
+                ticker_map[vt] = rt
+            st.write(f"Resolved: {', '.join(f'{k}→{v}' if k.upper()!=v else v for k,v in ticker_map.items())}")
 
             # ── Step 2: Fetch FMP fundamentals + Finnhub real-time prices in parallel ──
             fmp_contexts = {}
