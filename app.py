@@ -862,6 +862,29 @@ ENTRY PRICE METHODOLOGY — use ALL three inputs together:
 Always explain which factor drove the entry price in entryRationale.
 Sections text: 2 sentences each, not 10 words — be informative."""
 
+    # ── Step 1: Clean and validate ticker symbols ──
+    resolved_tickers = [re.sub(r'[^A-Z0-9.-]', '', vt.upper().strip()) for vt in valid_tickers]
+    resolved_tickers = [t for t in resolved_tickers if t]
+    st.write(f"Validating tickers: {', '.join(resolved_tickers)}...")
+
+    # Validate each ticker — check Finnhub returns a real price
+    invalid_tickers = []
+    if finnhub_key:
+        for tk in resolved_tickers:
+            fh = finnhub_quote(tk, finnhub_key)
+            if not fh.get("c") or fh.get("c", 0) == 0:
+                invalid_tickers.append(tk)
+        if invalid_tickers:
+            st.error(
+                f"⚠ Invalid ticker symbol{'s' if len(invalid_tickers)>1 else ''}: "
+                f"**{', '.join(invalid_tickers)}**\n\n"
+                f"Please enter valid stock ticker symbols (e.g. AAPL, NVDA, RKLB). "
+                f"Company names are not supported."
+            )
+            st.session_state['running'] = False
+            st.stop()
+    st.write(f"✓ Tickers valid: {', '.join(resolved_tickers)}")
+
     with st.status("Analyzing stocks...", expanded=True) as status:
         st.write(f"Resolving tickers and fetching live data...")
         st.info("💡 Keep this tab open and active during analysis. Streamlit pauses when the tab is hidden on mobile browsers.")
@@ -872,28 +895,6 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                 st.stop()
             client = anthropic.Anthropic(api_key=api_key)
 
-            # ── Step 1: Clean and validate ticker symbols ──
-            resolved_tickers = [re.sub(r'[^A-Z0-9.-]', '', vt.upper().strip()) for vt in valid_tickers]
-            resolved_tickers = [t for t in resolved_tickers if t]
-            st.write(f"Validating tickers: {', '.join(resolved_tickers)}...")
-
-            # Validate each ticker — check Finnhub returns a real price
-            invalid_tickers = []
-            if finnhub_key:
-                for tk in resolved_tickers:
-                    fh = finnhub_quote(tk, finnhub_key)
-                    if not fh.get("c") or fh.get("c", 0) == 0:
-                        invalid_tickers.append(tk)
-                if invalid_tickers:
-                    st.error(
-                        f"⚠ Invalid ticker symbol{'s' if len(invalid_tickers)>1 else ''}: "
-                        f"**{', '.join(invalid_tickers)}**\n\n"
-                        f"Please enter valid stock ticker symbols (e.g. AAPL, NVDA, RKLB). "
-                        f"Company names are not supported."
-                    )
-                    st.session_state['running'] = False
-                    st.stop()
-            st.write(f"✓ Tickers valid: {', '.join(resolved_tickers)}")
             # ── Step 2: Fetch FMP fundamentals + Finnhub real-time prices in parallel ──
             fmp_contexts = {}
             finnhub_prices = {}  # ticker -> {c, pc, dp} real-time from Finnhub
