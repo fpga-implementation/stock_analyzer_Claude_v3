@@ -218,6 +218,19 @@ FUND_LABELS = [
 
 # ── FMP Data Fetching ────────────────────────────────────────────────────────
 
+def finnhub_quote(ticker, fh_key):
+    """Fetch real-time quote from Finnhub. Returns dict with c=current, pc=prev_close, dp=chg_pct."""
+    if not fh_key: return {}
+    url = f"https://finnhub.io/api/v1/quote?symbol={ticker}&token={fh_key}"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            data = json.loads(r.read().decode())
+            # c=0 means no data
+            if data.get("c",0) == 0: return {}
+            return data
+    except Exception:
+        return {}
+
 def fmp_get(endpoint, fmp_api_key, params=None):
     """Fetch a single FMP endpoint. Returns dict/list or None on error."""
     base = "https://financialmodelingprep.com/api"
@@ -585,6 +598,16 @@ if not fmp_key:
 if not fmp_key:
     fmp_key = _os.environ.get("FMP_API_KEY", "")
 
+# ── Finnhub key (real-time prices) ──
+finnhub_key = ""
+try:    finnhub_key = st.secrets["FINNHUB_API_KEY"]
+except: pass
+if not finnhub_key:
+    try:    finnhub_key = st.secrets.get("FINNHUB_API_KEY","")
+    except: pass
+if not finnhub_key: finnhub_key = _os.environ.get("FINNHUB_API_KEY","")
+
+
 if not api_key:
     st.markdown("""
     <div style="background:#150505;border:1px solid #dc2626;padding:20px;color:#f87171;font-size:13px;line-height:2">
@@ -734,6 +757,7 @@ ss('stop_requested', False)
 ss('raw_response', None)
 ss('fmp_raw_data', {})
 ss('fmp_locked', {})
+ss('finnhub_prices', {})
 
 if analyze_clicked and not st.session_state['running']:
     # Phase 1: set running=True and rerun so Stop button activates BEFORE analysis starts
@@ -866,22 +890,42 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                 resolved_tickers.append(rt)
             st.write(f"Resolved: {', '.join(resolved_tickers)}")
 
-            # ── Step 2: Fetch live FMP data for all tickers in parallel ──
+            # ── Step 2: Fetch FMP fundamentals + Finnhub real-time prices in parallel ──
             fmp_contexts = {}
+            finnhub_prices = {}  # ticker -> {c, pc, dp} real-time from Finnhub
+
             if fmp_key:
-                st.write(f"Fetching live market data from FMP for {', '.join(resolved_tickers)}...")
+                st.write(f"Fetching live market data for {', '.join(resolved_tickers)}...")
+                # Fetch FMP + Finnhub simultaneously
+                def fetch_ticker(tk):
+                    fmp_raw = fmp_fetch_all(tk, fmp_key)
+                    fh_quote = finnhub_quote(tk, finnhub_key) if finnhub_key else {}
+                    return tk, fmp_raw, fh_quote
+
                 with ThreadPoolExecutor(max_workers=5) as ex:
-                    futures = {ex.submit(fmp_fetch_all, tk, fmp_key): tk for tk in resolved_tickers}
+                    futures = {ex.submit(fetch_ticker, tk): tk for tk in resolved_tickers}
                     for fut in as_completed(futures):
-                        tk = futures[fut]
-                        raw = fut.result()
+                        tk, raw, fh = fut.result()
+                        # Override FMP quote price with Finnhub real-time price
+                        if fh.get("c") and fh["c"] > 0:
+                            if isinstance(raw.get("quote"), list) and raw["quote"]:
+                                raw["quote"][0]["price"] = fh["c"]
+                                raw["quote"][0]["changesPercentage"] = fh.get("dp", 0)
+                            elif isinstance(raw.get("quote"), dict):
+                                raw["quote"]["price"] = fh["c"]
+                                raw["quote"]["changesPercentage"] = fh.get("dp", 0)
+                            finnhub_prices[tk] = fh
+                            src = "Finnhub (real-time) + FMP (fundamentals)"
+                        else:
+                            src = "FMP"
                         fmp_contexts[tk] = format_fmp_context(tk, raw)
-                        st.write(f"  ✓ {tk} live data fetched")
+                        st.write(f"  ✓ {tk} data fetched ({src})")
                         if 'fmp_raw_data' not in st.session_state:
                             st.session_state['fmp_raw_data'] = {}
                         st.session_state['fmp_raw_data'][tk] = raw
+                st.session_state['finnhub_prices'] = finnhub_prices
             else:
-                st.warning("⚠ FMP_API_KEY not set — using Claude training data only. Add FMP_API_KEY to Streamlit secrets for live data.")
+                st.warning("⚠ FMP_API_KEY not set — using Claude training data only.")
 
             # ── Step 3: Extract key numbers from FMP and build locked data block ──
             # These numbers are extracted directly and injected as REQUIRED values
@@ -1117,7 +1161,7 @@ Sections text: 2 sentences each, not 10 words — be informative."""
 
                 st.session_state['result'] = parsed
                 st.session_state['raw_response'] = None
-                st.session_state['data_source'] = "FMP + Claude" if fmp_contexts else "Claude only"
+                st.session_state['data_source'] = ("Finnhub + FMP + Claude" if st.session_state.get("finnhub_prices") else "FMP + Claude") if fmp_contexts else "Claude only"
                 st.session_state['fmp_tickers'] = list(fmp_contexts.keys()) if fmp_contexts else []
                 status.update(label="Analysis complete!", state="complete")
         except Exception as e:
@@ -1222,7 +1266,7 @@ if st.session_state['result']:
             if t2_iv:
                 price_pills += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #ffffff0a"><span style="font-size:10px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">Intrinsic Value</span><span style="font-family:Syne,sans-serif;font-size:14px;font-weight:800;color:#a78bfa">{t2_iv}</span></div>'
             if t2_con:
-                price_pills += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #ffffff0a"><span style="font-size:10px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">Consensus Target</span><span style="font-family:Syne,sans-serif;font-size:14px;font-weight:800;color:#93c5fd">{t2_con}</span></div>'
+                price_pills += f'<div style="display:flex;flex-direction:column;padding:6px 0;border-bottom:1px solid #ffffff0a"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:10px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">Consensus Target</span><span style="font-family:Syne,sans-serif;font-size:14px;font-weight:800;color:#93c5fd">{t2_con}</span></div><div style=\"font-size:9px;color:#f59e0b;margin-top:2px\">⚠ May be delayed or incorrect</div></div>'
             if t2_ent:
                 price_pills += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0"><span style="font-size:10px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase">Suggested Entry</span><span style="font-family:Syne,sans-serif;font-size:14px;font-weight:800;color:#4ade80">{t2_ent}</span></div>'
 
@@ -1335,7 +1379,7 @@ if st.session_state['result']:
                 price_strip += '<div></div>'
             # Consensus Target — blue
             if cons_val:
-                price_strip += f'<div style="background:#080f1f;border:1px solid #3b82f644;padding:8px 10px;"><div style="font-size:9px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Consensus Target</div><div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#93c5fd">{cons_val}</div></div>'
+                price_strip += f'<div style="background:#080f1f;border:1px solid #3b82f644;padding:8px 10px;"><div style="font-size:9px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Consensus Target</div><div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#93c5fd">{cons_val}</div><div style=\"font-size:9px;color:#f59e0b;margin-top:3px\">⚠ May be delayed or incorrect</div></div>'
             else:
                 price_strip += '<div></div>'
             # Suggested Entry — green
@@ -1435,8 +1479,10 @@ if st.session_state['result']:
                   <div class="big-val big-val-blue">{ac}</div>
                   <div class="sub-text">Range: {pp.get('targetRange','—')}</div>
                   {delta_badge(ac, cur_raw)}
+                  <div style="font-size:9px;color:#f59e0b;margin-top:4px">⚠ May be delayed or incorrect</div>
                 </div>""", unsafe_allow_html=True)
             with kc3:
+
                 ep = pp.get('entryPrice','—')
                 st.markdown(f"""
                 <div class="card card-green">
