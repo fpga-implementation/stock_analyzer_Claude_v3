@@ -278,10 +278,19 @@ def fmp_fetch_all(ticker, fmp_api_key):
         "dcf":         f"/v3/discounted-cash-flow/{ticker}",
         "earnings_est":   f"/v3/earnings-surprises/{ticker}",
         "earnings_next":  f"/v3/historical/earning_calendar/{ticker}",
+        "earnings_upcoming": f"/v3/earning_calendar",
     }
     results = {}
     def fetch_one(key, ep):
-        params = {"symbol": ticker} if key in ("targets", "target_list") else None
+        if key in ("targets", "target_list"):
+            params = {"symbol": ticker}
+        elif key == "earnings_upcoming":
+            from datetime import datetime as _dt2, timedelta as _td
+            today = _dt2.now().strftime("%Y-%m-%d")
+            future = (_dt2.now() + _td(days=180)).strftime("%Y-%m-%d")
+            params = {"symbol": ticker, "from": today, "to": future}
+        else:
+            params = None
         return key, fmp_get(ep, fmp_api_key, params)
 
     with ThreadPoolExecutor(max_workers=8) as ex:
@@ -1038,18 +1047,30 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                         locked["fwdRevenue"]     = fm(est.get("estimatedRevenueAvg")) if est.get("estimatedRevenueAvg") else "N/A"
                         locked["numAnalysts"]    = str(est.get("numberAnalystEstimatedRevenue","N/A"))
 
-                    # Next earnings date from FMP earnings calendar
+                    # Next earnings date — try upcoming endpoint first, then historical
                     from datetime import datetime as _dt
                     today_str = _dt.now().strftime("%Y-%m-%d")
-                    earn_cal = raw_fmp.get("earnings_next") or []
-                    if isinstance(earn_cal, list):
-                        future = [e for e in earn_cal if e.get("date","") >= today_str]
-                        future.sort(key=lambda x: x.get("date",""))
-                        if future:
-                            ne = future[0]
-                            locked["nextEarningsDate"]  = ne.get("date","N/A")
-                            locked["nextEarningsEPS"]   = ne.get("epsEstimated","N/A")
-                            locked["nextEarningsTiming"] = ne.get("time","N/A")  # amc/bmo
+                    # Try upcoming earnings endpoint first
+                    earn_up = raw_fmp.get("earnings_upcoming") or []
+                    earn_hist = raw_fmp.get("earnings_next") or []
+                    earn_combined = []
+                    for src in [earn_up, earn_hist]:
+                        if isinstance(src, list):
+                            earn_combined.extend(src)
+                        elif isinstance(src, dict) and src.get("earningsCalendar"):
+                            earn_combined.extend(src["earningsCalendar"])
+                    future_earns = [e for e in earn_combined
+                                    if e.get("date","") >= today_str
+                                    and e.get("symbol","").upper() == ticker.upper()]
+                    if not future_earns:
+                        # Try without symbol filter (upcoming endpoint returns all symbols)
+                        future_earns = [e for e in earn_combined if e.get("date","") >= today_str]
+                    future_earns.sort(key=lambda x: x.get("date",""))
+                    if future_earns:
+                        ne = future_earns[0]
+                        locked["nextEarningsDate"]   = ne.get("date","N/A")
+                        locked["nextEarningsEPS"]    = ne.get("epsEstimated","N/A")
+                        locked["nextEarningsTiming"] = ne.get("time","N/A")
 
                     # Calculate IV using correct model for this company type
                     iv_val_c, iv_meth_c, iv_desc_c = calc_intrinsic_value(raw_fmp)
@@ -1408,7 +1429,8 @@ if st.session_state['result']:
                 ri2 = next((i for i,t in enumerate(top2) if t.get('ticker')==tk), -1)
                 if ri2 >= 0 and ri2 < len(valid_tickers):
                     cand_idx = ri2
-        cur_raw = st.session_state['prices'][cand_idx] if cand_idx >= 0 and st.session_state['prices'][cand_idx] else s.get('currentPrice','')
+        cur_raw_full = st.session_state['prices'][cand_idx] if cand_idx >= 0 and st.session_state['prices'][cand_idx] else s.get('currentPrice','')
+        cur_raw = cur_raw_full.lstrip('$') if cur_raw_full else ''  # strip $ for delta_badge math
         cur_shares = st.session_state['shares'][cand_idx] if cand_idx >= 0 else ''
         vs = s.get('verdictStock','NEUTRAL')
         vp = s.get('verdictPortfolio','NEUTRAL')
@@ -1475,31 +1497,31 @@ if st.session_state['result']:
         cur_price_display = s.get('currentPrice','')
         if not cur_price_display and cur_raw:
             cur_price_display = f'${cur_raw}'
+        # Strip leading $ if already present to avoid $$
+        if cur_price_display and cur_price_display.startswith('$'):
+            cur_price_display = cur_price_display  # already has $, keep as-is
+        elif cur_price_display:
+            cur_price_display = f'${cur_price_display}'
 
         price_strip = ''
         if cur_price_display or iv_val or cons_val or entry_val:
-            price_strip = '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px">'
-            # Current Price — white/neutral
-            if cur_price_display:
-                price_strip += f'<div style="background:#0d1825;border:1px solid #3b82f644;padding:8px 10px;"><div style="font-size:9px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Current Price</div><div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#f0f6ff">{esc(cur_price_display)}</div></div>'
-            else:
-                price_strip += '<div></div>'
-            # Intrinsic Value — purple
-            if iv_val:
-                _iv_lbl = 'FMP DCF' if 'FMP' in pp.get('intrinsicMethod','') else 'Intrinsic Value'
-                price_strip += f'<div style="background:#0c0818;border:1px solid #7c3aed44;padding:8px 10px;"><div style="font-size:9px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">{_iv_lbl}</div><div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#a78bfa">{iv_val}</div></div>'
-            else:
-                price_strip += '<div></div>'
-            # Consensus Target — blue
-            if cons_val:
-                price_strip += f'<div style="background:#080f1f;border:1px solid #3b82f644;padding:8px 10px;"><div style="font-size:9px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Consensus Target</div><div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#93c5fd">{cons_val}</div><div style=\"font-size:9px;color:#f59e0b;margin-top:3px\">⚠ May be delayed or incorrect</div></div>'
-            else:
-                price_strip += '<div></div>'
-            # Suggested Entry — green
-            if entry_val:
-                price_strip += f'<div style="background:#060f09;border:1px solid #16a34a44;padding:8px 10px;"><div style="font-size:9px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Suggested Entry</div><div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#4ade80">{entry_val}</div></div>'
-            else:
-                price_strip += '<div></div>'
+            price_strip = '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-bottom:10px">'
+            # Row 1: Intrinsic Value | Consensus Target
+            _iv_lbl = 'FMP DCF' if 'FMP' in pp.get('intrinsicMethod','') else 'Intrinsic Value'
+            price_strip += ('<div style="background:#0c0818;border:1px solid #7c3aed44;padding:8px 10px;">'
+                '<div style="font-size:9px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">' + _iv_lbl + '</div>'
+                '<div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#a78bfa">' + (iv_val or '—') + '</div></div>')
+            price_strip += ('<div style="background:#080f1f;border:1px solid #3b82f644;padding:8px 10px;">'
+                '<div style="font-size:9px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Consensus Target</div>'
+                '<div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#93c5fd">' + (cons_val or '—') + '</div>'
+                '<div style="font-size:9px;color:#f59e0b;margin-top:3px">⚠ May be delayed</div></div>')
+            # Row 2: Suggested Entry | Current Price
+            price_strip += ('<div style="background:#060f09;border:1px solid #16a34a44;padding:8px 10px;">'
+                '<div style="font-size:9px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Suggested Entry</div>'
+                '<div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#4ade80">' + (entry_val or '—') + '</div></div>')
+            price_strip += ('<div style="background:#0d1825;border:1px solid #3b82f644;padding:8px 10px;">'
+                '<div style="font-size:9px;letter-spacing:1.5px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Current Price</div>'
+                '<div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:#f0f6ff">' + esc(cur_price_display or '—') + '</div></div>')
             price_strip += '</div>'
 
         # One self-contained HTML block — no split across st.columns
@@ -1760,23 +1782,4 @@ if st.session_state['result']:
                     <div style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;color:#f0f6ff">{sa.get("sectorRank","—")}</div>
                   </div>
                 </div>
-                <div class="sec-body" style="margin-bottom:10px">{sa.get("sectorOutlook","")}</div>"""
-                st.markdown(sector_html, unsafe_allow_html=True)
-
-                # Peer comparison table
-                peers = sa.get('peerComparison', [])
-                if peers:
-                    st.markdown('<div style="font-size:8px;letter-spacing:2px;color:#94a3b8;text-transform:uppercase;margin-bottom:7px">Peer Comparison</div>', unsafe_allow_html=True)
-                    peer_rows = ""
-                    for p in peers:
-                        v = p.get("verdict","")
-                        v_color = "#4ade80" if v in ("Above","Premium","Inline") else "#f87171" if v in ("Below","Discount") else "#fbbf24"
-                        peer_rows += f"""<tr>
-                          <td style="color:#e2e8f0;font-weight:700">{p.get("peer","")}</td>
-                          <td style="color:#94a3b8">{p.get("metric","")}</td>
-                          <td style="color:#cbd5e1">{p.get("peerVal","—")}</td>
-                          <td style="color:#f0f6ff;font-weight:700">{p.get("stockVal","—")}</td>
-                          <td><span style="color:{v_color};font-size:10px">{v}</span></td>
-                        </tr>"""
-                    thead = '<table class="data-table"><thead><tr><th>Peer</th><th>Metric</th><th>Peer</th><th>This Stock</th><th>vs Peer</th></tr></thead><tbody>'
-                    st
+                <div class="sec-body" style="marg
