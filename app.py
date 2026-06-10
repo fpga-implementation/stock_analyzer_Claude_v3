@@ -1778,4 +1778,4 @@ if st.session_state['result']:
                           <td style="color:#f0f6ff;font-weight:700">{p.get("stockVal","—")}</td>
                           <td><span style="color:{v_color};font-size:10px">{v}</span></td>
                         </tr>"""
-                    st.markdown(f'<table class="data-table"><thead><tr><th>Peer</th><th>Metric</th><th>Peer</th><th>This Stock</th><th>vs Peer</th></tr></thead><tbody>{peer_rows}</tbody>
+                    peer_table = '<table class="data-table"><thead><tr><th>Peer</th><th>Metric</th><th>Peer</th><th>This Stock</th><th>vs Peer</th></tr></thead><tbody>' + peer_rows + '</
