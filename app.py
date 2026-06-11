@@ -923,7 +923,10 @@ Sections text: 2 sentences each, not 10 words — be informative."""
 
             # ── Step 2: Fetch FMP fundamentals + Finnhub real-time prices in parallel ──
             fmp_contexts = {}
-            finnhub_prices = {}  # ticker -> {c, pc, dp} real-time from Finnhub
+            finnhub_prices = {}
+
+            # Debug: show key status
+            st.write(f"Keys: FMP={'✓' if fmp_key else '✗ MISSING'} | Finnhub={'✓' if finnhub_key else '✗ MISSING'} | Anthropic={'✓' if api_key else '✗ MISSING'}")
 
             if fmp_key:
                 st.write(f"Fetching live market data for {', '.join(resolved_tickers)}...")
