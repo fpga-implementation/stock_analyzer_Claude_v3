@@ -1313,6 +1313,8 @@ if st.session_state['result']:
     # ── Data source badge ──
     data_source = st.session_state.get('data_source')
     fmp_tickers = st.session_state.get('fmp_tickers', [])
+    # Debug: show all relevant session state values
+    st.write(f"DEBUG — data_source='{data_source}' | fmp_tickers={fmp_tickers} | fmp_raw_data keys={list(st.session_state.get('fmp_raw_data',{}).keys())} | finnhub_prices keys={list(st.session_state.get('finnhub_prices',{}).keys())}")
     if data_source:
         if data_source == "FMP + Claude":
             badge_bg    = "#061508"
