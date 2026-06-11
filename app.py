@@ -1780,4 +1780,120 @@ if st.session_state['result']:
                 sector_html += f'<div style="font-family:Syne,sans-serif;font-size:14px;font-weight:700;color:#93c5fd">{sector_sector}</div>'
                 sector_html += '</div>'
                 sector_html += '<div class="card" style="padding:10px 14px;flex:1;min-width:140px">'
-                sector_html += '<div class="label">Sector Rank<
+                sector_html += '<div class="label">Sector Rank</div>'
+                sector_html += f'<div style="font-family:Syne,sans-serif;font-size:14px;font-weight:700;color:#f0f6ff">{sector_rank}</div>'
+                sector_html += '</div></div>'
+                sector_html += f'<div class="sec-body" style="margin-bottom:10px">{sector_outlook}</div>'
+                st.markdown(sector_html, unsafe_allow_html=True)
+
+                # Peer comparison table
+                peers = sa.get('peerComparison', [])
+                if peers:
+                    st.markdown('<div style="font-size:8px;letter-spacing:2px;color:#94a3b8;text-transform:uppercase;margin-bottom:7px">Peer Comparison</div>', unsafe_allow_html=True)
+                    peer_rows = ""
+                    for p in peers:
+                        v = p.get("verdict","")
+                        v_color = "#4ade80" if v in ("Above","Premium","Inline") else "#f87171" if v in ("Below","Discount") else "#fbbf24"
+                        peer_rows += f"""<tr>
+                          <td style="color:#e2e8f0;font-weight:700">{p.get("peer","")}</td>
+                          <td style="color:#94a3b8">{p.get("metric","")}</td>
+                          <td style="color:#cbd5e1">{p.get("peerVal","—")}</td>
+                          <td style="color:#f0f6ff;font-weight:700">{p.get("stockVal","—")}</td>
+                          <td><span style="color:{v_color};font-size:10px">{v}</span></td>
+                        </tr>"""
+                    thead = '<table class="data-table"><thead><tr><th>Peer</th><th>Metric</th><th>Peer</th><th>This Stock</th><th>vs Peer</th></tr></thead><tbody>'
+                    st.markdown(thead + peer_rows + '</tbody></table>', unsafe_allow_html=True)
+
+                # Sector catalysts + risks
+                cat_catalysts = esc(sa.get('sectorCatalysts','—'))
+                cat_risks     = esc(sa.get('sectorRisks','—'))
+                cat_risk_html  = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">'
+                cat_risk_html += '<div class="card card-green" style="padding:11px">'
+                cat_risk_html += '<div class="label">Sector Catalysts</div>'
+                cat_risk_html += f'<div style="font-size:13px;color:#e2e8f0;line-height:1.8;margin-top:4px">{cat_catalysts}</div>'
+                cat_risk_html += '</div>'
+                cat_risk_html += '<div class="card" style="padding:11px;border-color:#dc262644;background:#150505">'
+                cat_risk_html += '<div class="label">Sector Risks</div>'
+                cat_risk_html += f'<div style="font-size:13px;color:#e2e8f0;line-height:1.8;margin-top:4px">{cat_risks}</div>'
+                cat_risk_html += '</div></div>'
+                st.markdown(cat_risk_html, unsafe_allow_html=True)
+
+            # ── DETAILED RISK ANALYSIS ──
+            ra = s.get('riskAnalysis', {})
+            if ra:
+                # Risk rating header
+                rating = ra.get("overallRiskRating","Medium")
+                risk_score = ra.get("riskScore", 50)
+                try: risk_score = int(risk_score)
+                except: risk_score = 50
+                r_color = "#4ade80" if rating=="Low" else "#fbbf24" if rating=="Medium" else "#f87171" if rating=="High" else "#dc2626"
+
+                st.markdown(f'<div class="sec-hdr">⚠ Detailed Risk Analysis</div>', unsafe_allow_html=True)
+                st.markdown(f"""
+                <div style="display:flex;align-items:center;gap:16px;padding:12px;background:#090f1a;border:1px solid #111c2a;margin-bottom:10px">
+                  <div>
+                    <div class="label">Overall Risk Rating</div>
+                    <div style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:{r_color}">{rating}</div>
+                  </div>
+                  <div>
+                    <div class="label">Risk Score</div>
+                    <div style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:{r_color}">{risk_score}<span style="font-size:12px;color:#5a7a99">/100</span></div>
+                  </div>
+                  <div style="flex:1">
+                    <div class="label" style="margin-bottom:5px">Risk Meter</div>
+                    <div style="height:6px;background:#1a2e48;border-radius:3px">
+                      <div style="height:6px;width:{risk_score}%;background:{r_color};border-radius:3px;transition:width 0.5s"></div>
+                    </div>
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Risk categories
+                risk_cats = [
+                    ("Business Risk", "businessRisk", "🏢"),
+                    ("Financial Risk", "financialRisk", "💰"),
+                    ("Macro Risk", "macroRisk", "🌐"),
+                    ("Regulatory Risk", "regulatoryRisk", "⚖️"),
+                    ("Valuation Risk", "valuationRisk", "📊"),
+                ]
+                for lbl, key, icon in risk_cats:
+                    if ra.get(key):
+                        st.markdown(f'<div class="sec-body" style="margin-bottom:6px"><span style="color:#3b82f6;font-family:Syne,sans-serif;font-size:9px;letter-spacing:1px">{icon} {lbl}: </span>{ra[key]}</div>', unsafe_allow_html=True)
+
+                # Key risks table
+                key_risks = ra.get("keyRisks", [])
+                if key_risks:
+                    st.markdown('<div style="font-size:8px;letter-spacing:2px;color:#94a3b8;text-transform:uppercase;margin:10px 0 7px">Key Risk Factors</div>', unsafe_allow_html=True)
+                    risk_rows = ""
+                    for kr in key_risks:
+                        sev = kr.get("severity","Medium")
+                        lik = kr.get("likelihood","Medium")
+                        sev_color = "#f87171" if sev=="High" else "#fbbf24" if sev=="Medium" else "#4ade80"
+                        lik_color = "#f87171" if lik=="High" else "#fbbf24" if lik=="Medium" else "#4ade80"
+                        risk_rows += f"""<tr>
+                          <td style="color:#e2e8f0">{kr.get("risk","")}</td>
+                          <td><span style="color:{sev_color};font-size:10px">● {sev}</span></td>
+                          <td><span style="color:{lik_color};font-size:10px">● {lik}</span></td>
+                          <td style="font-size:12px;color:#cbd5e1">{kr.get("mitigation","")}</td>
+                        </tr>"""
+                    st.markdown(f'<table class="data-table"><thead><tr><th>Risk</th><th>Severity</th><th>Likelihood</th><th>Mitigation</th></tr></thead><tbody>{risk_rows}</tbody></table>', unsafe_allow_html=True)
+
+                # Bull/Bear case prices
+                if ra.get("bearCasePrice") or ra.get("bullCasePrice"):
+                    bc1, bc2 = st.columns(2)
+                    with bc1:
+                        st.markdown(f"""
+                        <div class="card" style="padding:11px;border-color:#dc262644;background:#150505">
+                          <div class="label">Bear Case Price</div>
+                          <div style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:#f87171">{ra.get("bearCasePrice","—")}</div>
+                          <div style="font-size:11px;color:#cbd5e1;margin-top:3px">Worst-case scenario</div>
+                        </div>""", unsafe_allow_html=True)
+                    with bc2:
+                        st.markdown(f"""
+                        <div class="card card-green" style="padding:11px">
+                          <div class="label">Bull Case Price</div>
+                          <div style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:#4ade80">{ra.get("bullCasePrice","—")}</div>
+                          <div style="font-size:11px;color:#cbd5e1;margin-top:3px">Best-case scenario</div>
+                        </div>""", unsafe_allow_html=True)
+
+    st.markdown('<div class="disc">FOR INFORMATIONAL PURPOSES ONLY — NOT FINANCIAL ADVICE</div>', unsafe_allow_html=True)
