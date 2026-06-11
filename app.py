@@ -1313,18 +1313,22 @@ if st.session_state['result']:
     # ── Data source badge ──
     data_source = st.session_state.get('data_source')
     fmp_tickers = st.session_state.get('fmp_tickers', [])
-    # Debug: show all relevant session state values
-    st.write(f"DEBUG — data_source='{data_source}' | fmp_tickers={fmp_tickers} | fmp_raw_data keys={list(st.session_state.get('fmp_raw_data',{}).keys())} | finnhub_prices keys={list(st.session_state.get('finnhub_prices',{}).keys())}")
     if data_source:
-        if data_source == "FMP + Claude":
+        tickers_str = ', '.join(fmp_tickers) if fmp_tickers else 'N/A'
+        if "FMP" in (data_source or "") or "Finnhub" in (data_source or ""):
             badge_bg    = "#061508"
             badge_border= "#16a34a55"
             badge_icon  = "📡"
             badge_color = "#4ade80"
-            badge_label = "Live Data"
-            badge_desc  = f"Real-time market data from Financial Modeling Prep ({', '.join(fmp_tickers)}) + AI reasoning by Claude"
+            badge_label = data_source
+            badge_desc  = f"Live market data ({tickers_str}) + AI reasoning by Claude"
         else:
             badge_bg    = "#0f1208"
+            badge_border= "#ca8a0455"
+            badge_icon  = "🧠"
+            badge_color = "#fbbf24"
+            badge_label = "Training Data"
+            badge_desc  = "FMP not connected — add FMP_API_KEY to Streamlit secrets for live data."
             badge_border= "#ca8a0455"
             badge_icon  = "🧠"
             badge_color = "#fbbf24"

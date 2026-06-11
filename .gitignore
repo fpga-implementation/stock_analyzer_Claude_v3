@@ -1,1 +1,3 @@
 ./tags/
+.streamlit/secrets.toml
+.env
