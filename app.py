@@ -569,7 +569,11 @@ ss('fmp_tickers', [])
 ss('tickers', ['','','','',''])
 ss('shares', ['','','','',''])
 ss('prices', ['','','','',''])
-ss('holdings', [{'ticker':'','shares':'','cost':''} for _ in range(10)])
+ss('holdings', [{'ticker':'','shares':'','cost':''} for _ in range(15)])
+# Ensure holdings list always has exactly 15 items (handles old saved state with 10)
+while len(st.session_state['holdings']) < 15:
+    st.session_state['holdings'].append({'ticker':'','shares':'','cost':''})
+st.session_state['holdings'] = st.session_state['holdings'][:15]
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -664,27 +668,189 @@ with st.expander("▸ STOCKS TO ANALYZE — ticker symbols only (up to 5)", expa
         st.session_state['prices'][i] = ''
 
 # ── Portfolio ─────────────────────────────────────────────────────────────────
-with st.expander("▸ MY PORTFOLIO — TOP 10 HOLDINGS (optional)"):
-    st.markdown('<div class="label">Ticker · Shares · Avg Cost per share</div>', unsafe_allow_html=True)
-    for i in range(10):
+with st.expander("▸ MY PORTFOLIO — UP TO 15 HOLDINGS (optional)"):
+
+    # ── GROUP 1: Import or Manual toggle ──
+    st.markdown('<div class="label" style="margin-bottom:8px">How would you like to enter your portfolio?</div>', unsafe_allow_html=True)
+    mode_col1, mode_col2 = st.columns(2)
+    with mode_col1:
+        if st.button("📥 Import from Google Sheets", use_container_width=True, key="btn_mode_import"):
+            st.session_state['portfolio_mode'] = 'import'
+    with mode_col2:
+        if st.button("✏️ Enter Manually", use_container_width=True, key="btn_mode_manual"):
+            st.session_state['portfolio_mode'] = 'manual'
+
+    port_mode = st.session_state.get('portfolio_mode', 'manual')
+
+    # ── Import mode ──
+    if port_mode == 'import':
+        st.markdown('''
+        <div style="background:#090f1a;border:1px solid #1a2e48;padding:12px 14px;margin:10px 0">
+          <div style="font-size:9px;letter-spacing:2px;color:#3b82f6;text-transform:uppercase;margin-bottom:8px">📊 Google Sheets Setup</div>
+          <div style="font-size:11px;color:#94a3b8;line-height:2">
+            1. Create a Google Sheet with columns: <b style="color:#e2e8f0">Ticker | Shares | Avg Cost</b><br>
+            2. Click <b style="color:#e2e8f0">File → Share → Publish to web</b><br>
+            3. Select <b style="color:#e2e8f0">Comma-separated values (.csv)</b> → click <b style="color:#e2e8f0">Publish</b><br>
+            4. Copy the URL and paste it below
+          </div>
+        </div>
+        ''', unsafe_allow_html=True)
+
+        st.text_input(
+            "Google Sheet Published CSV URL",
+            value=st.session_state.get('gs_url',''),
+            placeholder="https://docs.google.com/spreadsheets/d/.../pub?output=csv",
+            key="gs_url_input"
+        )
+        do_import = st.button("🚀 Run Import", use_container_width=True, key="btn_do_import")
+
+        if do_import:
+            gs_url = st.session_state.get('gs_url_input','').strip()
+            if not gs_url:
+                st.error("Please paste a Google Sheets URL first.")
+            else:
+                with st.spinner("Fetching your portfolio..."):
+                    try:
+                        import urllib.request as _ur
+                        import csv as _csv
+                        import io as _io
+                        import re as _re_gs
+                        url = gs_url.strip()
+                        # Accept any of these URL formats:
+                        # 1. Already a published CSV: .../pub?...output=csv  (use as-is)
+                        # 2. /d/e/ export format: already valid, ensure output=csv
+                        # 3. Regular edit URL: convert to published CSV
+                        if 'output=csv' in url:
+                            pass  # already correct format
+                        elif '/pub?' in url:
+                            url = url + ('&output=csv' if '?' in url else '?output=csv')
+                        else:
+                            match = _re_gs.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
+                            if match:
+                                sheet_id = match.group(1)
+                                url = f'https://docs.google.com/spreadsheets/d/{sheet_id}/pub?output=csv'
+                            else:
+                                st.error('Could not parse the Google Sheets URL. Please use the published CSV URL from File > Share > Publish to web.')
+                                st.stop()
+
+                        with _ur.urlopen(url, timeout=10) as r:
+                            raw_csv = r.read().decode('utf-8-sig')
+
+                        reader = _csv.DictReader(_io.StringIO(raw_csv))
+                        rows = list(reader)
+
+                        if not rows:
+                            st.error("The sheet appears empty. Make sure it has at least one row of data below the header.")
+                        else:
+                            # Auto-detect columns
+                            headers = {k.lower().strip(): k for k in rows[0].keys()}
+                            def find_col(candidates):
+                                for cand in candidates:
+                                    for h_low, h_orig in headers.items():
+                                        if cand in h_low: return h_orig
+                                return None
+
+                            ticker_col = find_col(['ticker','symbol','stock'])
+                            shares_col = find_col(['shares','quantity','qty','units'])
+                            cost_col   = find_col(['avg cost','average cost','cost basis','avg price','average price','cost per','price'])
+
+                            if not ticker_col:
+                                st.error(f"Could not find a Ticker/Symbol column. Columns in your sheet: **{', '.join(rows[0].keys())}**")
+                            elif not shares_col:
+                                st.error(f"Could not find a Shares/Quantity column. Columns in your sheet: **{', '.join(rows[0].keys())}**")
+                            else:
+                                parsed = []
+                                skipped = []
+                                for row in rows:
+                                    tk  = re.sub(r'[^A-Z0-9.-]', '', str(row.get(ticker_col,'')).upper().strip())
+                                    sh  = re.sub(r'[^0-9.]', '', str(row.get(shares_col,'')).strip())
+                                    cst = re.sub(r'[^0-9.]', '', str(row.get(cost_col,'') if cost_col else '').strip())
+                                    if tk and sh:
+                                        parsed.append({'ticker': tk, 'shares': sh, 'cost': cst})
+                                    elif tk:
+                                        skipped.append(tk)
+
+                                if not parsed:
+                                    st.error("No valid holdings found. Make sure Ticker and Shares columns have data.")
+                                else:
+                                    # Sort by market value desc, take top 15, then alphabetically
+                                    def mkt_val(h):
+                                        try: return float(h['shares']) * float(h['cost']) if h['cost'] else float(h['shares'])
+                                        except: return 0
+                                    parsed.sort(key=mkt_val, reverse=True)
+                                    parsed = parsed[:15]
+                                    parsed.sort(key=lambda h: h['ticker'])
+
+                                    # Clear all 15 slots then fill
+                                    st.session_state['holdings'] = [{'ticker':'','shares':'','cost':''} for _ in range(15)]
+                                    for i, h in enumerate(parsed):
+                                        st.session_state['holdings'][i] = h
+                                        st.session_state[f'htk{i}'] = h['ticker']
+                                        st.session_state[f'hsh{i}'] = h['shares']
+                                        st.session_state[f'hco{i}'] = h['cost']
+                                    for i in range(len(parsed), 15):
+                                        st.session_state[f'htk{i}'] = ''
+                                        st.session_state[f'hsh{i}'] = ''
+                                        st.session_state[f'hco{i}'] = ''
+                                    st.session_state['gs_url'] = gs_url
+                                    st.session_state['portfolio_mode'] = 'manual'  # switch to manual view to show results
+
+                                    msg = f"✓ Imported {len(parsed)} holdings"
+                                    if len(parsed) == 15: msg += " (top 15 by market value)"
+                                    if skipped: msg += f" · Skipped {len(skipped)} rows with missing shares"
+                                    st.success(msg)
+                                    st.rerun()
+
+                    except Exception as e:
+                        err_msg = str(e)
+                        if '404' in err_msg:
+                            st.error('Import failed: Sheet not found. Your sheet must be Published to the web as CSV. Go to File > Share > Publish to web > select CSV format > Publish. Then copy that URL here.')
+                        elif '403' in err_msg or 'permission' in err_msg.lower():
+                            st.error('Import failed: Permission denied. Make sure the sheet is published publicly, not just shared.')
+                        elif 'timeout' in err_msg.lower():
+                            st.error('Import failed: Connection timed out. Check your internet connection and try again.')
+                        else:
+                            st.error('Import failed. Please check your URL and make sure the sheet is published as CSV.')
+
+
+    # ── GROUP 2: Holdings table (shown in both modes) ──
+    filled = sum(1 for h in st.session_state['holdings'] if h.get('ticker'))
+    st.markdown(
+        f'<div style="font-size:10px;letter-spacing:2px;color:#94a3b8;text-transform:uppercase;margin:12px 0 4px">Holdings ({filled}/15 filled) — Ticker · Shares · Avg Cost</div>'
+        '<div style="font-size:11px;color:#3b82f6;margin-bottom:8px">ℹ️ These are your existing holdings used for portfolio context. Enter stocks to analyze in the section above.</div>',
+        unsafe_allow_html=True)
+    # Initialize widget keys from holdings if not already set
+    for i in range(15):
+        if f'htk{i}' not in st.session_state:
+            st.session_state[f'htk{i}'] = st.session_state['holdings'][i].get('ticker','')
+        if f'hsh{i}' not in st.session_state:
+            st.session_state[f'hsh{i}'] = st.session_state['holdings'][i].get('shares','')
+        if f'hco{i}' not in st.session_state:
+            st.session_state[f'hco{i}'] = st.session_state['holdings'][i].get('cost','')
+
+    for i in range(15):
         c1, c2, c3, c4 = st.columns([0.5, 2, 2, 2])
         with c1:
             st.markdown(f'<div style="font-size:9px;color:#fff;padding-top:8px">#{i+1}</div>', unsafe_allow_html=True)
         with c2:
-            st.session_state['holdings'][i]['ticker'] = st.text_input(
-                f"HTk{i}", value=st.session_state['holdings'][i]['ticker'],
-                placeholder="MSFT", max_chars=6, key=f"htk{i}", label_visibility="collapsed"
-            ).upper().upper().strip()
+            # Use key only — no value= to avoid session state conflict
+            st.text_input(
+                f"HTk{i}", placeholder="MSFT", max_chars=6,
+                key=f"htk{i}", label_visibility="collapsed"
+            )
+            st.session_state['holdings'][i]['ticker'] = st.session_state[f'htk{i}'].upper().strip()
         with c3:
-            st.session_state['holdings'][i]['shares'] = st.text_input(
-                f"HSh{i}", value=st.session_state['holdings'][i]['shares'],
-                placeholder="Shares", key=f"hsh{i}", label_visibility="collapsed"
+            st.text_input(
+                f"HSh{i}", placeholder="Shares",
+                key=f"hsh{i}", label_visibility="collapsed"
             )
+            st.session_state['holdings'][i]['shares'] = st.session_state[f'hsh{i}']
         with c4:
-            st.session_state['holdings'][i]['cost'] = st.text_input(
-                f"HCo{i}", value=st.session_state['holdings'][i]['cost'],
-                placeholder="Avg $", key=f"hco{i}", label_visibility="collapsed"
+            st.text_input(
+                f"HCo{i}", placeholder="Avg $",
+                key=f"hco{i}", label_visibility="collapsed"
             )
+            st.session_state['holdings'][i]['cost'] = st.session_state[f'hco{i}']
 
 st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
@@ -692,7 +858,7 @@ st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 save_to_url()
 
 # ── Top-level derived variables (available throughout the page) ──
-port_holds = [h for h in st.session_state['holdings'] if h['ticker'] and h['shares'] and h['cost']]
+port_holds = [h for h in st.session_state['holdings'] if h.get('ticker') and h.get('shares') and h.get('cost')]
 port_val   = sum(float(h['shares']) * float(h['cost']) for h in port_holds)
 valid_tickers = [t for t in st.session_state['tickers'] if t]
 
@@ -705,26 +871,6 @@ btn_label = f"ANALYZE {len(valid_tickers)} STOCK{'S' if len(valid_tickers)!=1 el
 # ── Button row: Analyze | Stop | Clear ──
 is_running = st.session_state['running']
 
-# Detect stop/clear actions from URL params set by HTML buttons below
-_action = st.query_params.get('action', '')
-if _action == 'stop':
-    st.query_params.pop('action', None)
-    st.session_state['running'] = False
-    st.session_state['stop_requested'] = True
-    st.rerun()
-elif _action == 'clear':
-    st.query_params.pop('action', None)
-    for _k in ['result','running','data_source','fmp_tickers','stop_requested','do_analyze']:
-        if _k in ('result','data_source'):           st.session_state[_k] = None
-        elif _k in ('running','stop_requested','do_analyze'): st.session_state[_k] = False
-        elif _k == 'fmp_tickers':                    st.session_state[_k] = []
-    st.session_state['tickers']     = ['','','','','']
-    st.session_state['shares']      = ['','','','','']
-    st.session_state['prices']      = ['','','','','']
-    st.session_state['holdings']    = [{'ticker':'','shares':'','cost':''} for _ in range(10)]
-    st.session_state['initialized'] = False
-    st.query_params.clear()
-    st.rerun()
 
 # Analyze via st.button (must be Streamlit widget)
 analyze_clicked = st.button(
@@ -734,41 +880,40 @@ analyze_clicked = st.button(
     key="btn_analyze"
 )
 
-# Stop + Clear as raw HTML buttons — we own the CSS completely
-_stop_bg  = "#2d0a0a" if is_running else "#0d0808"
-_stop_bdr = "#f87171" if is_running else "#2a0a0a"
-_stop_clr = "#fca5a5" if is_running else "#3a1010"
-_stop_cur = "pointer" if is_running else "not-allowed"
-_stop_op  = "1"       if is_running else "0.4"
-_btn_base = (
-    "font-family:monospace;font-size:11px;font-weight:700;letter-spacing:2px;"
-    "text-transform:uppercase;padding:9px 4px;width:100%;border-radius:0;"
-    "transition:background .2s;display:block;text-align:center;"
-    "text-decoration:none;"
-)
-# Build URLs that preserve existing query params
-_current_params = dict(st.query_params)
-_current_params.pop('action', None)
-_param_str = '&'.join(f'{k}={v}' for k, v in _current_params.items())
-_stop_url  = f"?action=stop&{_param_str}"  if _param_str else "?action=stop"
-_clear_url = "?action=clear"  # clear intentionally wipes everything
+# Stop + Clear as st.button — no new tab issue
+sc1, sc2 = st.columns(2)
+with sc1:
+    stop_clicked = st.button('■ STOP', disabled=not is_running, use_container_width=True, key='btn_stop')
+    if stop_clicked:
+        st.session_state['running'] = False
+        st.session_state['stop_requested'] = True
+        st.rerun()
+with sc2:
+    clear_clicked = st.button('✕ CLEAR', use_container_width=True, key='btn_clear')
+    if clear_clicked:
+        for _k in ['result','running','data_source','fmp_tickers','stop_requested','do_analyze',
+                   'fmp_raw_data','fmp_locked','finnhub_prices','finnhub_sentiment_data','raw_response']:
+            if _k in ('result','data_source','raw_response'): st.session_state[_k] = None
+            elif _k in ('running','stop_requested','do_analyze'): st.session_state[_k] = False
+            elif _k == 'fmp_tickers': st.session_state[_k] = []
+            else: st.session_state[_k] = {}
+        st.session_state['tickers']  = ['','','','','']
+        st.session_state['shares']   = ['','','','','']
+        st.session_state['prices']   = ['','','','','']
+        st.session_state['holdings'] = [{'ticker':'','shares':'','cost':''} for _ in range(15)]
+        st.session_state['initialized'] = False
+        st.query_params.clear()
+        st.rerun()
 
-st.markdown(f"""
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;margin-bottom:6px">
-  <a href="{_stop_url}" style="text-decoration:none;{'pointer-events:none;' if not is_running else ''}">
-    <div style="{_btn_base}background:{_stop_bg};border:1px solid {_stop_bdr};
-                color:{_stop_clr};cursor:{_stop_cur};opacity:{_stop_op}">
-      &#9632; STOP
-    </div>
-  </a>
-  <a href="{_clear_url}" style="text-decoration:none">
-    <div style="{_btn_base}background:#2d2500;border:1px solid #fbbf24;
-                color:#fde68a;cursor:pointer">
-      &#10005; CLEAR
-    </div>
-  </a>
-</div>
-""", unsafe_allow_html=True)
+# Inject CSS for stop/clear button colors
+st.markdown('<style>'
+    'div[data-testid="stHorizontalBlock"] div[data-testid="column"]:nth-child(1) button {'
+    'background-color:#2d0a0a !important;border:1px solid #f87171 !important;color:#fca5a5 !important;}'
+    'div[data-testid="stHorizontalBlock"] div[data-testid="column"]:nth-child(1) button:disabled {'
+    'background-color:#1a0808 !important;border:1px solid #7f1d1d !important;color:#7f1d1d !important;opacity:1 !important;}'
+    'div[data-testid="stHorizontalBlock"] div[data-testid="column"]:nth-child(2) button {'
+    'background-color:#2d2500 !important;border:1px solid #fbbf24 !important;color:#fde68a !important;}'
+    '</style>', unsafe_allow_html=True)
 
 
 ss('stop_requested', False)
@@ -777,6 +922,8 @@ ss('fmp_raw_data', {})
 ss('fmp_locked', {})
 ss('finnhub_prices', {})
 ss('finnhub_sentiment_data', {})
+ss('gs_url', '')
+ss('portfolio_mode', 'manual')
 
 if analyze_clicked and not st.session_state['running']:
     # Phase 1: set running=True and rerun so Stop button activates BEFORE analysis starts
@@ -792,7 +939,7 @@ if st.session_state.get('do_analyze') and st.session_state['running']:
     # Phase 2: page has re-rendered with Stop enabled, now run analysis
     st.session_state['do_analyze'] = False
 
-    port_holds = [h for h in st.session_state['holdings'] if h['ticker'] and h['shares'] and h['cost']]
+    port_holds = [h for h in st.session_state['holdings'] if h.get('ticker') and h.get('shares') and h.get('cost')]
     port_val = sum(float(h['shares']) * float(h['cost']) for h in port_holds)
 
     if port_holds:
@@ -1288,9 +1435,15 @@ Sections text: 2 sentences each, not 10 words — be informative."""
                 st.session_state['fmp_tickers'] = list(fmp_contexts.keys())
                 status.update(label="Analysis complete!", state="complete")
         except Exception as e:
-            st.error(f"Error: {e}")
-            import traceback
-            st.error(traceback.format_exc())
+            err = str(e)
+            if 'credit' in err.lower() or 'billing' in err.lower():
+                st.error('API credit limit reached. Please add credits at platform.anthropic.com → Billing.')
+            elif '401' in err or 'api_key' in err.lower() or 'authentication' in err.lower():
+                st.error('Invalid API key. Please check your ANTHROPIC_API_KEY in Streamlit secrets.')
+            elif '529' in err or 'overloaded' in err.lower():
+                st.error('Claude API is temporarily overloaded. Please wait a moment and try again.')
+            else:
+                st.error('Analysis failed. Please try again. If the problem persists, check your API keys in Streamlit secrets.')
         finally:
             st.session_state['running'] = False
             # Always overwrite data_source based on what was actually fetched
