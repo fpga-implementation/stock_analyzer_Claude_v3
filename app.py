@@ -16,7 +16,7 @@ def esc(value):
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Stock Analyzer - Claude",
+    page_title="NGUYENILY X - Stocks Analyzer",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -581,7 +581,7 @@ st.markdown("""
   <div style="width:8px;height:8px;background:#3b82f6;border-radius:50%;margin-bottom:4px;box-shadow:0 0 12px #3b82f6"></div>
   <div>
     <div style="font-size:9px;letter-spacing:4px;color:#3b82f6;text-transform:uppercase;margin-bottom:2px">Equity Research Terminal</div>
-    <div style="font-family:'Syne',sans-serif;font-size:22px;font-weight:800;color:#f0f6ff">STOCK ANALYZER — CLAUDE</div>
+    <div style="font-family:'Syne',sans-serif;font-size:22px;font-weight:800;color:#f0f6ff">NGUYENILY X - Stocks Analyzer</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
